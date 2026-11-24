@@ -53,11 +53,11 @@
               </div>
             </div>
 
-            <div class="roster" id="roster" aria-label="本局方块角色、血量和手持道具"></div>
-            <div class="item-status" id="itemStatus" role="status" aria-live="polite">道具 0/2 · 自动使用就绪</div>
+            <div class="roster" id="roster" aria-label="本局方块角色、血量、护盾和手持道具"></div>
+            <div class="item-status" id="itemStatus" role="status" aria-live="polite">普通道具 0/2 · 自动使用就绪</div>
 
             <div class="arena-shell" id="arenaShell">
-              <canvas id="gameCanvas" aria-label="方块自动弹跳并自动拾取武器；AI 会预判攻击对手，显示生命值、子弹、喷火和 C4 效果。">
+              <canvas id="gameCanvas" aria-label="方块自动弹跳并自动拾取道具；AI 会预判攻击对手，显示生命值、50 HP 护盾、子弹、喷火、穿透激光和 C4 效果。">
                 你的浏览器不支持 Canvas。
               </canvas>
               <div class="canvas-fallback" id="canvasFallback" aria-live="polite">
@@ -149,6 +149,18 @@
                 <div class="range-limits"><span>1 HP</span><span>最多 10000 HP</span></div>
               </div>
 
+              <div class="setting-control speed-control">
+                <div class="setting-label-row">
+                  <label for="moveSpeedRange">移动速度</label>
+                  <span class="setting-value"><output id="moveSpeedOutput" for="moveSpeedRange">1.0</output><small>×</small></span>
+                </div>
+                <div class="range-input-row">
+                  <input id="moveSpeedRange" type="range" min="0.5" max="3" step="0.1" value="1.0" aria-label="设置方块移动速度倍率，0.5 到 3 倍" />
+                  <input id="moveSpeedNumber" type="number" min="0.5" max="3" step="0.1" value="1.0" aria-label="移动速度倍率数值" />
+                </div>
+                <div class="range-limits"><span>0.5× 慢</span><span>3.0× 快</span></div>
+              </div>
+
               <div class="setting-control obstacle-control">
                 <div class="setting-label-row">
                   <label for="obstacleCountRange">障碍物数量</label>
@@ -172,7 +184,7 @@
                 <button class="action-button primary apply-button" id="applySettingsButton" type="button">应用设置并开局</button>
                 <button class="defaults-button" id="defaultSettingsButton" type="button">恢复默认值</button>
               </div>
-              <div class="item-api-note"><span class="api-dot is-live"></span><span><strong>一次性道具</strong><small>场上+手持最多 2 件 · 全局使用冷却 6 秒</small></span></div>
+              <div class="item-api-note"><span class="api-dot is-live"></span><span><strong>普通一次性道具</strong><small>场上+手持最多 2 件 · 使用冷却 6 秒；盾牌独立持有，不占普通手持栏也无冷却</small></span></div>
             </section>
 
             <section class="info-card glass-panel rules-card" aria-labelledby="rules-title">
@@ -213,8 +225,16 @@
                   <span class="rule-symbol c4-symbol" aria-hidden="true">C4</span>
                   <span><strong>刀与 C4</strong><small>刀接触 5 HP；C4 贴身 5 秒后爆炸，2 格范围内 20 HP，安装者免疫</small></span>
                 </div>
+                <div class="rule-row">
+                  <span class="rule-symbol shield-symbol" aria-hidden="true">⬟</span>
+                  <span><strong>盾牌</strong><small>获得独立的 50 HP 护盾，优先吸收伤害；不占普通道具栏，也不受 6 秒冷却限制</small></span>
+                </div>
+                <div class="rule-row">
+                  <span class="rule-symbol laser-symbol" aria-hidden="true">⚡</span>
+                  <span><strong>激光枪</strong><small>自动预判瞄准并持续 2 秒；粗光束穿透方块，每帧造成 2 HP，颜色与射手相同</small></span>
+                </div>
               </div>
-              <div class="physics-note"><i></i> 自动拾取与自动攻击，无手动操控；枪弹不会击中持枪方块。</div>
+              <div class="physics-note"><i></i> 自动拾取与自动攻击，无手动操控；枪弹和激光不会伤到射手，C4 安装者免疫自己的爆炸。</div>
             </section>
 
             <section class="info-card glass-panel mood-card" aria-labelledby="mood-title">

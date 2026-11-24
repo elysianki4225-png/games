@@ -40,6 +40,9 @@
   const blockHealthRange = document.getElementById('blockHealthRange');
   const blockHealthNumber = document.getElementById('blockHealthNumber');
   const blockHealthOutput = document.getElementById('blockHealthOutput');
+  const moveSpeedRange = document.getElementById('moveSpeedRange');
+  const moveSpeedNumber = document.getElementById('moveSpeedNumber');
+  const moveSpeedOutput = document.getElementById('moveSpeedOutput');
   const obstacleCountRange = document.getElementById('obstacleCountRange');
   const obstacleCountNumber = document.getElementById('obstacleCountNumber');
   const obstacleCountOutput = document.getElementById('obstacleCountOutput');
@@ -90,12 +93,14 @@
     obstacleCount: 0,
     mapType: 'empty',
     collisionAcceleration: false,
+    speedMultiplier: 1.0,
     itemsEnabled: true,
   });
   const MATCH_LIMITS = Object.freeze({
     blockCount: Object.freeze({ min: 1, max: 48 }),
     blockHealth: Object.freeze({ min: 1, max: 10000 }),
     obstacleCount: Object.freeze({ min: 0, max: 12 }),
+    speedMultiplier: Object.freeze({ min: 0.5, max: 3, step: 0.1 }),
   });
   const ITEM_RULES = Object.freeze({
     maxOnField: 2,
@@ -104,6 +109,11 @@
     pistolDamage: 10,
     shotgunPelletDamage: 10,
     sniperDamage: 20,
+    shieldHealth: 50,
+    laserDamagePerFrame: 2,
+    laserDuration: 2,
+    laserWidthCells: 0.28,
+    laserAimCellsPerSecond: 30,
     refillInterval: 6,
     c4Damage: 20,
     c4RadiusCells: 2,
@@ -124,6 +134,8 @@
     sniper: Object.freeze({ name: '狙击枪', shortName: '狙击', icon: '◎', color: '#b69aff', group: 'ranged' }),
     flamethrower: Object.freeze({ name: '喷火器', shortName: '喷火', icon: '♨', color: '#ff895f', group: 'ranged' }),
     c4: Object.freeze({ name: 'C4', shortName: 'C4', icon: 'C4', color: '#67d6a9', group: 'contact' }),
+    shield: Object.freeze({ name: '盾牌', shortName: '盾', icon: '⬟', color: '#69d4ff', group: 'passive' }),
+    laser: Object.freeze({ name: '激光枪', shortName: '激光', icon: '⚡', color: '#bd8bff', group: 'ranged' }),
   });
   const ITEM_TYPES = Object.keys(ITEM_DEFINITIONS);
   const BORDER = 7;
@@ -175,6 +187,13 @@
     return Math.max(min, Math.min(max, Math.round(parsed)));
   }
 
+  function clampDecimal(value, min, max, fallback, precision = 1) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    const factor = 10 ** precision;
+    return Math.round(Math.max(min, Math.min(max, parsed)) * factor) / factor;
+  }
+
   function normalizeMatchConfig(overrides = {}, base = activeConfig || DEFAULT_MATCH_CONFIG) {
     const input = overrides && typeof overrides === 'object' ? overrides : {};
     const defaults = base && typeof base === 'object' ? base : DEFAULT_MATCH_CONFIG;
@@ -194,6 +213,12 @@
       MATCH_LIMITS.blockHealth.max,
       DEFAULT_MATCH_CONFIG.blockHealth,
     );
+    const fallbackSpeedMultiplier = clampDecimal(
+      defaults.speedMultiplier,
+      MATCH_LIMITS.speedMultiplier.min,
+      MATCH_LIMITS.speedMultiplier.max,
+      DEFAULT_MATCH_CONFIG.speedMultiplier,
+    );
     return Object.freeze({
       blockCount: clampInteger(input.blockCount, MATCH_LIMITS.blockCount.min, MATCH_LIMITS.blockCount.max, defaults.blockCount),
       blockHealth: clampInteger(input.blockHealth, MATCH_LIMITS.blockHealth.min, MATCH_LIMITS.blockHealth.max, fallbackBlockHealth),
@@ -202,6 +227,12 @@
       collisionAcceleration: typeof input.collisionAcceleration === 'boolean'
         ? input.collisionAcceleration
         : Boolean(defaults.collisionAcceleration),
+      speedMultiplier: clampDecimal(
+        input.speedMultiplier,
+        MATCH_LIMITS.speedMultiplier.min,
+        MATCH_LIMITS.speedMultiplier.max,
+        fallbackSpeedMultiplier,
+      ),
       itemsEnabled: true,
     });
   }
@@ -406,7 +437,7 @@
     const size = blockSizeForCount(count);
     const position = spawnPosition(size, placed);
     const angle = Math.random() * Math.PI * 2;
-    const speed = world.cell * (1.45 + Math.random() * 0.72);
+    const speed = world.cell * (1.45 + Math.random() * 0.72) * match.config.speedMultiplier;
     const name = NAMES[index] || `方块 ${String(index + 1).padStart(2, '0')}`;
     return {
       id: `block-${index + 1}`,
@@ -430,6 +461,7 @@
       eliminated: false,
       radiationTimers: new Map(),
       heldItems: [],
+      shield: null,
       lastDamage: 0,
       angle,
       faceMood: 'idle',
@@ -474,7 +506,10 @@
       const heldItems = document.createElement('small');
       heldItems.className = 'roster-items';
       heldItems.textContent = '手持 —';
-      copy.append(name, mood, healthRow, heldItems);
+      const shieldStatus = document.createElement('small');
+      shieldStatus.className = 'roster-shield';
+      shieldStatus.textContent = '护盾 —';
+      copy.append(name, mood, healthRow, heldItems, shieldStatus);
       chip.append(swatch, copy);
       roster.append(chip);
     });
@@ -525,6 +560,7 @@
       items: [],
       projectiles: [],
       flames: [],
+      lasers: [],
       c4Charges: [],
       itemEffects: [],
       hostilityScores: new Map(),
@@ -534,6 +570,7 @@
       itemUseReadyAt: 0,
       itemUses: 0,
       projectileHits: 0,
+      laserHits: 0,
       c4Detonations: 0,
       paused: false,
       ended: false,
@@ -600,17 +637,23 @@
       const healthValue = chip.querySelector('.roster-health-value');
       const healthFill = chip.querySelector('.roster-health-fill');
       const heldItemsElement = chip.querySelector('.roster-items');
+      const shieldStatusElement = chip.querySelector('.roster-shield');
       const heldItemNames = fighter.heldItems.map((item) => ITEM_DEFINITIONS[item.type]?.shortName || item.type);
       const heldItemsLabel = heldItemNames.length ? heldItemNames.join('、') : '—';
+      const shieldHealth = fighter.shield ? Math.ceil(fighter.shield.health) : 0;
       const ratio = fighter.maxHealth > 0 ? Math.max(0, fighter.health / fighter.maxHealth) : 0;
       if (moodElement && moodElement.textContent !== label) moodElement.textContent = label;
       if (healthValue) healthValue.textContent = `${Math.ceil(fighter.health)} HP`;
       if (healthFill) healthFill.style.width = `${ratio * 100}%`;
       if (heldItemsElement) heldItemsElement.textContent = `手持 ${heldItemsLabel}`;
+      if (shieldStatusElement) shieldStatusElement.textContent = fighter.shield
+        ? `护盾 ${shieldHealth}/${fighter.shield.maxHealth} HP`
+        : '护盾 —';
+      chip.classList.toggle('has-shield', Boolean(fighter.shield));
       chip.classList.toggle('is-reacting', fighter.faceMood !== 'idle' && now < fighter.moodUntil);
       chip.classList.toggle('is-critical', !fighter.eliminated && ratio <= 0.25);
       chip.classList.toggle('is-eliminated', fighter.eliminated);
-      chip.setAttribute('aria-label', `${fighter.name}，${label}，${Math.ceil(fighter.health)} / ${fighter.maxHealth} HP，手持道具 ${heldItemsLabel}`);
+      chip.setAttribute('aria-label', `${fighter.name}，${label}，${Math.ceil(fighter.health)} / ${fighter.maxHealth} HP，手持道具 ${heldItemsLabel}，${fighter.shield ? `护盾 ${shieldHealth} / ${fighter.shield.maxHealth} HP` : '无护盾'}`);
     });
     const livingCount = match.fighters.filter((fighter) => !fighter.eliminated).length;
     aliveCount.textContent = String(livingCount);
@@ -643,7 +686,7 @@
     if (!itemStatus || !match) return;
     const cooldown = itemCooldownRemaining();
     const cooldownText = cooldown > 0.04 ? `全局冷却 ${Math.ceil(cooldown)} 秒` : '自动使用就绪';
-    const statusText = `道具 ${totalItemCount()}/${ITEM_RULES.maxOnField} · ${cooldownText}`;
+    const statusText = `普通道具 ${totalItemCount()}/${ITEM_RULES.maxOnField} · ${cooldownText}`;
     if (itemStatus.textContent !== statusText) itemStatus.textContent = statusText;
     itemStatus.classList.toggle('is-cooling', cooldown > 0.04);
   }
@@ -691,7 +734,7 @@
     const factor = collisionType === 'block' ? 1.085 : (collisionType === 'obstacle' ? 1.065 : 1.045);
     const speed = Math.hypot(fighter.vx, fighter.vy);
     if (speed <= 0) return;
-    const maximum = world.cell * (match.config.blockCount > 24 ? 4.8 : 5.5);
+    const maximum = world.cell * (match.config.blockCount > 24 ? 4.8 : 5.5) * match.config.speedMultiplier;
     const scale = Math.min(factor, maximum / speed);
     fighter.vx *= scale;
     fighter.vy *= scale;
@@ -796,28 +839,54 @@
     const damage = Math.max(1, Math.round(amount));
     const attacker = attackerId ? match.fighters.find((item) => item.id === attackerId) : null;
     if (attacker) recordHostility(fighter, attacker, Math.max(1, damage / 5));
-    fighter.lastDamage = damage;
-    fighter.health = Math.max(0, fighter.health - damage);
+
+    let healthDamage = damage;
+    let shieldDamage = 0;
+    let shieldBroken = false;
+    if (fighter.shield && fighter.shield.health > 0) {
+      shieldDamage = Math.min(fighter.shield.health, healthDamage);
+      fighter.shield.health = Math.max(0, fighter.shield.health - shieldDamage);
+      healthDamage -= shieldDamage;
+      if (fighter.shield.health <= 0) {
+        fighter.shield = null;
+        shieldBroken = true;
+      }
+    }
+
+    fighter.lastDamage = healthDamage;
+    if (healthDamage > 0) fighter.health = Math.max(0, fighter.health - healthDamage);
+    setMood(fighter, 'hurt', 700);
+    addBurst(
+      fighter.x,
+      fighter.y,
+      shieldDamage > 0 ? ['#69d4ff', fighter.color, '#ffffff'] : [fighter.color, '#ff8190', '#ffffff'],
+      source === 'laser' ? 1 : 4,
+    );
+
+    const sourceLabel = ({
+      radiation: '辐射坑', cactus: '仙人掌', knife: '刀', pistol: '手枪',
+      shotgun: '霰弹枪', sniper: '狙击枪', flamethrower: '喷火器', c4: 'C4 爆炸', laser: '激光',
+    })[source] || '对手';
+    if (announce && shieldDamage > 0) {
+      const healthText = healthDamage > 0 ? `，生命 -${healthDamage} HP` : '，生命未受伤';
+      const brokenText = shieldBroken ? '，护盾破裂' : '';
+      addEvent(`${fighter.name} 的护盾挡下${sourceLabel} ${shieldDamage} 伤害${healthText}${brokenText}`, ITEM_DEFINITIONS.shield.color);
+    } else if (announce && healthDamage > 0) {
+      addEvent(`${fighter.name} 受到${sourceLabel}伤害 -${healthDamage} HP`, '#ff8292');
+    }
+
     if (fighter.health <= 0) {
       eliminateFighter(fighter, source);
-      return damage;
+      return healthDamage;
     }
-    setMood(fighter, 'hurt', 700);
-    addBurst(fighter.x, fighter.y, [fighter.color, '#ff8190', '#ffffff'], 4);
-    if (announce) {
-      const sourceLabel = ({
-        radiation: '辐射坑', cactus: '仙人掌', knife: '刀', pistol: '手枪',
-        shotgun: '霰弹枪', sniper: '狙击枪', flamethrower: '喷火器', c4: 'C4 爆炸',
-      })[source] || '对手';
-      addEvent(`${fighter.name} 受到${sourceLabel}伤害 -${damage} HP`, '#ff8292');
-    }
-    return damage;
+    return healthDamage;
   }
 
   function eliminateFighter(fighter, source) {
     if (fighter.eliminated) return;
     fighter.health = 0;
     fighter.eliminated = true;
+    fighter.shield = null;
     dropHeldItems(fighter);
     fighter.faceMood = 'idle';
     match.eliminations += 1;
@@ -964,6 +1033,7 @@
     match.items = [];
     match.projectiles = [];
     match.flames = [];
+    match.lasers = [];
     match.c4Charges = [];
     match.itemEffects = [];
     match.itemUseReadyAt = match.simulationTime;
@@ -977,6 +1047,7 @@
     match.items = [];
     match.projectiles = [];
     match.flames = [];
+    match.lasers = [];
     match.c4Charges = [];
     match.itemEffects = [];
   }
@@ -992,8 +1063,19 @@
       held: match.fighters.flatMap((fighter) => fighter.heldItems.map((item) => ({
         id: item.id, type: item.type, block: fighter.id,
       }))),
+      shields: match.fighters.filter((fighter) => fighter.shield).map((fighter) => ({
+        block: fighter.id,
+        health: fighter.shield.health,
+        maxHealth: fighter.shield.maxHealth,
+      })),
       projectiles: match.projectiles.length,
       flames: match.flames.length,
+      lasers: match.lasers.map((laser) => ({
+        owner: laser.ownerId,
+        target: laser.targetId,
+        remaining: Number(laser.remaining.toFixed(3)),
+        angle: Number(laser.angle.toFixed(4)),
+      })),
       attachedC4: match.c4Charges.length,
     };
   }
@@ -1049,13 +1131,20 @@
         remaining.push(pickup);
         return;
       }
-      collector.heldItems.push({
-        id: pickup.id,
-        type: pickup.type,
-        acquiredAt: match.simulationTime,
-      });
       const definition = ITEM_DEFINITIONS[pickup.type];
-      addEvent(`${collector.name} 拾起${definition.name}，准备自动使用`, definition.color);
+      if (pickup.type === 'shield') {
+        const maxHealth = ITEM_RULES.shieldHealth;
+        const currentHealth = collector.shield?.health || 0;
+        collector.shield = { health: Math.min(maxHealth, currentHealth + maxHealth), maxHealth };
+        addEvent(`${collector.name} 获得独立护盾（${collector.shield.health}/${maxHealth} HP）`, definition.color);
+      } else {
+        collector.heldItems.push({
+          id: pickup.id,
+          type: pickup.type,
+          acquiredAt: match.simulationTime,
+        });
+        addEvent(`${collector.name} 拾起${definition.name}，准备自动使用`, definition.color);
+      }
       showToast(`${collector.name} 拾起${definition.name}`);
       changed = true;
     });
@@ -1184,6 +1273,23 @@
     return true;
   }
 
+  function startLaser(owner, target) {
+    if (!owner || owner.eliminated || !target || target.eliminated) return false;
+    const aimPoint = predictInterceptPoint(
+      owner,
+      target,
+      world.cell * ITEM_RULES.laserAimCellsPerSecond,
+    );
+    match.lasers.push({
+      id: `laser-${match.nextItemId++}`,
+      ownerId: owner.id,
+      targetId: target.id,
+      angle: Math.atan2(aimPoint.y - owner.y, aimPoint.x - owner.x),
+      remaining: ITEM_RULES.laserDuration,
+    });
+    return true;
+  }
+
   function plantC4(owner, target) {
     if (!owner || !target || owner.id === target.id || target.eliminated) return false;
     match.c4Charges.push({
@@ -1223,6 +1329,14 @@
       if (used) {
         addEvent(`${owner.name} 启动喷火器（5 秒）`, definition.color);
         showToast(`${owner.name} 开始喷火！`);
+      }
+    } else if (item.type === 'laser') {
+      const enemy = pickHostileTarget(owner);
+      if (!enemy) return false;
+      used = startLaser(owner, enemy);
+      if (used) {
+        addEvent(`${owner.name} 发射穿透激光，自动锁定 ${enemy.name}（2 秒）`, owner.color);
+        showToast(`${owner.name} 的激光开始扫射！`);
       }
     } else {
       const enemy = pickHostileTarget(owner);
@@ -1369,6 +1483,54 @@
     match.projectiles = remaining;
   }
 
+  function laserBeamSegment(owner, angle) {
+    const dx = Math.cos(angle);
+    const dy = Math.sin(angle);
+    const muzzleOffset = owner.size * 0.54 + 3;
+    const x1 = owner.x + dx * muzzleOffset;
+    const y1 = owner.y + dy * muzzleOffset;
+    const candidates = [];
+    if (dx > 1e-8) candidates.push((world.width - world.border - x1) / dx);
+    else if (dx < -1e-8) candidates.push((world.border - x1) / dx);
+    if (dy > 1e-8) candidates.push((world.height - world.border - y1) / dy);
+    else if (dy < -1e-8) candidates.push((world.border - y1) / dy);
+    const validDistances = candidates.filter((candidate) => Number.isFinite(candidate) && candidate >= 0);
+    const distance = validDistances.length ? Math.min(...validDistances) : 0;
+    return { x1, y1, x2: x1 + dx * distance, y2: y1 + dy * distance };
+  }
+
+  function updateLasers(dt) {
+    const remaining = [];
+    match.lasers.forEach((laser) => {
+      const owner = match.fighters.find((fighter) => fighter.id === laser.ownerId);
+      if (!owner || owner.eliminated) return;
+      const target = pickHostileTarget(owner);
+      if (target) {
+        const aimPoint = predictInterceptPoint(
+          owner,
+          target,
+          world.cell * ITEM_RULES.laserAimCellsPerSecond,
+        );
+        laser.targetId = target.id;
+        laser.angle = Math.atan2(aimPoint.y - owner.y, aimPoint.x - owner.x);
+      }
+      const segment = laserBeamSegment(owner, laser.angle);
+      const beamRadius = world.cell * ITEM_RULES.laserWidthCells / 2;
+      match.fighters.forEach((fighter) => {
+        if (fighter.eliminated || fighter.id === owner.id) return;
+        const hitRadius = fighter.size / 2 + beamRadius;
+        if (pointSegmentDistanceSquared(fighter.x, fighter.y, segment.x1, segment.y1, segment.x2, segment.y2)
+          > hitRadius * hitRadius) return;
+        applyDamage(fighter, ITEM_RULES.laserDamagePerFrame, 'laser', true, owner.id);
+        match.laserHits += 1;
+      });
+      laser.remaining = Math.max(0, laser.remaining - dt);
+      if (laser.remaining > 1e-6) remaining.push(laser);
+      else addEvent(`${owner.name} 的激光熄灭`, owner.color);
+    });
+    match.lasers = remaining;
+  }
+
   function flameContainsTarget(flame, owner, target) {
     const dx = target.x - owner.x;
     const dy = target.y - owner.y;
@@ -1459,6 +1621,7 @@
     if (!match || !ITEM_SYSTEM_API.enabled) return;
     match.itemSpawnCooldown = Math.max(0, match.itemSpawnCooldown - dt);
     updateProjectiles(dt);
+    updateLasers(dt);
     updateFlames(dt);
     updateC4Charges(dt);
     updateItemEffects(dt);
@@ -1475,13 +1638,266 @@
     syncItemHud();
   }
 
+  function drawItemModel(type, color, radius, time) {
+    const scale = radius / 14;
+    const dark = '#24334b';
+    const metal = '#dcecff';
+    ctx.save();
+    ctx.scale(scale, scale);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 1.5;
+
+    if (type === 'knife') {
+      ctx.save();
+      ctx.rotate(-0.55);
+      ctx.fillStyle = '#b84d53';
+      roundedRect(-13, -2.6, 9, 5.2, 1.5);
+      ctx.fill();
+      ctx.strokeStyle = '#ffe1bd';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-4, -4.4);
+      ctx.lineTo(-4, 4.4);
+      ctx.stroke();
+      const blade = ctx.createLinearGradient(0, -4, 0, 4);
+      blade.addColorStop(0, '#ffffff');
+      blade.addColorStop(1, '#9fb8d2');
+      ctx.fillStyle = blade;
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(-3, -3.4);
+      ctx.lineTo(9, -3.4);
+      ctx.lineTo(14, 0);
+      ctx.lineTo(9, 3.4);
+      ctx.lineTo(-3, 3.4);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    } else if (type === 'pistol') {
+      ctx.fillStyle = dark;
+      ctx.strokeStyle = '#f5f8ff';
+      ctx.beginPath();
+      ctx.moveTo(-13, -5);
+      ctx.lineTo(5, -5);
+      ctx.lineTo(11, -3);
+      ctx.lineTo(12, 0);
+      ctx.lineTo(3, 2);
+      ctx.lineTo(0, 10);
+      ctx.lineTo(-6, 10);
+      ctx.lineTo(-8, 2);
+      ctx.lineTo(-13, 1);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = metal;
+      roundedRect(-10, -4, 17, 3, 1);
+      ctx.fill();
+      ctx.fillStyle = color;
+      roundedRect(-6.5, 3, 4, 5, 1);
+      ctx.fill();
+      ctx.strokeStyle = '#9eb2cc';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(-1, 2);
+      ctx.quadraticCurveTo(3, 6, -1, 7);
+      ctx.stroke();
+    } else if (type === 'shotgun') {
+      ctx.fillStyle = '#a56845';
+      ctx.strokeStyle = '#f5e7d4';
+      ctx.beginPath();
+      ctx.moveTo(-14, -4);
+      ctx.lineTo(-7, -4);
+      ctx.lineTo(-5, -2);
+      ctx.lineTo(3, -2);
+      ctx.lineTo(3, 3);
+      ctx.lineTo(-4, 3);
+      ctx.lineTo(-7, 8);
+      ctx.lineTo(-12, 8);
+      ctx.lineTo(-11, 2);
+      ctx.lineTo(-14, 1);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = dark;
+      roundedRect(-3, -4, 11, 8, 2);
+      ctx.fill();
+      ctx.strokeStyle = metal;
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(6, -2.5);
+      ctx.lineTo(14, -2.5);
+      ctx.moveTo(6, 2.5);
+      ctx.lineTo(14, 2.5);
+      ctx.stroke();
+      ctx.fillStyle = color;
+      roundedRect(-1, 3, 6, 2, 1);
+      ctx.fill();
+    } else if (type === 'sniper') {
+      ctx.fillStyle = '#9a6e54';
+      ctx.strokeStyle = '#f5e7d4';
+      ctx.beginPath();
+      ctx.moveTo(-14, -4);
+      ctx.lineTo(-6, -4);
+      ctx.lineTo(-4, -2);
+      ctx.lineTo(3, -2);
+      ctx.lineTo(3, 3);
+      ctx.lineTo(-4, 3);
+      ctx.lineTo(-7, 8);
+      ctx.lineTo(-12, 8);
+      ctx.lineTo(-11, 2);
+      ctx.lineTo(-14, 1);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = dark;
+      roundedRect(-4, -3, 11, 6, 2);
+      ctx.fill();
+      ctx.strokeStyle = metal;
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(6, 0);
+      ctx.lineTo(14, 0);
+      ctx.stroke();
+      ctx.fillStyle = color;
+      roundedRect(-1, -8, 7, 3.5, 1.5);
+      ctx.fill();
+      ctx.strokeStyle = '#e7d7ff';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(1, -4.5);
+      ctx.lineTo(1, -2.8);
+      ctx.moveTo(5, -4.5);
+      ctx.lineTo(5, -2.8);
+      ctx.stroke();
+    } else if (type === 'flamethrower') {
+      ctx.fillStyle = '#38485d';
+      ctx.strokeStyle = '#ffe7d5';
+      roundedRect(-4, -5, 15, 10, 3);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#d27c47';
+      roundedRect(-12, -9, 6, 18, 3);
+      ctx.fill();
+      ctx.strokeStyle = '#ffcb67';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(9, -2);
+      ctx.lineTo(14, -2);
+      ctx.lineTo(14, 2);
+      ctx.lineTo(9, 2);
+      ctx.stroke();
+      ctx.fillStyle = '#ff7a45';
+      ctx.beginPath();
+      ctx.moveTo(14, -4);
+      ctx.quadraticCurveTo(19, 0, 14, 4);
+      ctx.quadraticCurveTo(16, 0, 14, -4);
+      ctx.fill();
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(-9, 0, 1.3, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (type === 'c4') {
+      ctx.fillStyle = dark;
+      ctx.strokeStyle = '#e6fff3';
+      roundedRect(-12, -9, 24, 18, 4);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#bc4e55';
+      roundedRect(-9, -6, 18, 12, 2.5);
+      ctx.fill();
+      ctx.fillStyle = '#ffed9e';
+      roundedRect(-5, -3.7, 10, 4.5, 1);
+      ctx.fill();
+      ctx.fillStyle = '#29354b';
+      ctx.font = '900 5px system-ui';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('C4', 0, -1.3);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.7;
+      ctx.beginPath();
+      ctx.moveTo(-7, -8);
+      ctx.quadraticCurveTo(-9, -13, -3, -12);
+      ctx.moveTo(7, -8);
+      ctx.quadraticCurveTo(10, -13, 4, -12);
+      ctx.stroke();
+    } else if (type === 'shield') {
+      const shield = ctx.createLinearGradient(0, -12, 0, 12);
+      shield.addColorStop(0, '#b9f0ff');
+      shield.addColorStop(0.52, color);
+      shield.addColorStop(1, '#3485ad');
+      ctx.fillStyle = shield;
+      ctx.strokeStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.moveTo(-11, -10);
+      ctx.lineTo(11, -10);
+      ctx.lineTo(10, 2);
+      ctx.quadraticCurveTo(8, 8, 0, 13);
+      ctx.quadraticCurveTo(-8, 8, -10, 2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,.88)';
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.moveTo(0, -7);
+      ctx.lineTo(0, 8);
+      ctx.moveTo(-7, -1);
+      ctx.lineTo(7, -1);
+      ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      drawStar(0, -1, 3, 1.4, 4);
+    } else if (type === 'laser') {
+      ctx.fillStyle = dark;
+      ctx.strokeStyle = '#f2eaff';
+      ctx.beginPath();
+      ctx.moveTo(-13, -5);
+      ctx.lineTo(2, -5);
+      ctx.lineTo(8, -3);
+      ctx.lineTo(13, -3);
+      ctx.lineTo(14, 2);
+      ctx.lineTo(5, 2);
+      ctx.lineTo(2, 5);
+      ctx.lineTo(-3, 5);
+      ctx.lineTo(-6, 10);
+      ctx.lineTo(-11, 10);
+      ctx.lineTo(-9, 2);
+      ctx.lineTo(-13, 1);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 6;
+      roundedRect(1, -3.4, 7, 3, 1.3);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(12, -0.5, 1.5 + Math.sin(time * 0.02) * 0.35, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#d6bcff';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(-2, -5);
+      ctx.lineTo(1, -8);
+      ctx.lineTo(5, -5);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
   function renderItemSystem(_context, time = performance.now()) {
     if (!match || !world || !ITEM_SYSTEM_API.enabled) return;
     match.items.forEach((item) => {
       const definition = ITEM_DEFINITIONS[item.type];
       const pulse = 1 + Math.sin(time * 0.005 + item.phase) * 0.1;
       ctx.save();
-      ctx.globalAlpha = 0.3;
+      ctx.globalAlpha = 0.25;
       ctx.fillStyle = definition.color;
       ctx.beginPath();
       ctx.arc(item.x, item.y, item.radius * 1.85 * pulse, 0, Math.PI * 2);
@@ -1489,22 +1905,25 @@
       ctx.globalAlpha = 1;
       ctx.shadowColor = definition.color;
       ctx.shadowBlur = 14;
-      ctx.fillStyle = 'rgba(20, 29, 48, 0.96)';
+      ctx.fillStyle = 'rgba(20, 29, 48, 0.97)';
       ctx.beginPath();
-      ctx.arc(item.x, item.y, item.radius * pulse, 0, Math.PI * 2);
+      ctx.arc(item.x, item.y, item.radius * 1.16 * pulse, 0, Math.PI * 2);
       ctx.fill();
       ctx.shadowBlur = 0;
       ctx.lineWidth = 2;
       ctx.strokeStyle = definition.color;
       ctx.stroke();
-      ctx.fillStyle = definition.color;
-      ctx.font = `900 ${Math.max(10, item.radius * 0.8)}px system-ui`;
+      ctx.save();
+      ctx.translate(item.x, item.y);
+      drawItemModel(item.type, definition.color, item.radius, time);
+      ctx.restore();
+      ctx.font = `800 ${Math.max(7, world.cell * 0.16)}px system-ui`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(definition.icon, item.x, item.y);
-      ctx.font = `800 ${Math.max(7, world.cell * 0.16)}px system-ui`;
+      ctx.fillStyle = 'rgba(8, 14, 26, 0.84)';
+      ctx.fillText(definition.name, item.x, item.y + item.radius * 1.16 + 9);
       ctx.fillStyle = '#ffffff';
-      ctx.fillText(definition.name, item.x, item.y + item.radius + 9);
+      ctx.fillText(definition.name, item.x, item.y + item.radius * 1.16 + 8);
       ctx.restore();
     });
 
@@ -1551,6 +1970,49 @@
       ctx.fillStyle = '#ffffff';
       ctx.beginPath();
       ctx.arc(projectile.x, projectile.y, Math.max(1.6, projectile.radius * 0.5), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
+
+    match.lasers.forEach((laser) => {
+      const owner = match.fighters.find((fighter) => fighter.id === laser.ownerId);
+      if (!owner || owner.eliminated) return;
+      const segment = laserBeamSegment(owner, laser.angle);
+      const width = Math.max(9, world.cell * ITEM_RULES.laserWidthCells);
+      const pulse = 0.86 + Math.sin(time * 0.035 + laser.angle) * 0.08;
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = owner.color;
+      ctx.shadowColor = owner.color;
+      ctx.shadowBlur = width * 1.8;
+      ctx.globalAlpha = 0.42;
+      ctx.lineWidth = width * 2.35 * pulse;
+      ctx.beginPath();
+      ctx.moveTo(segment.x1, segment.y1);
+      ctx.lineTo(segment.x2, segment.y2);
+      ctx.stroke();
+      ctx.globalAlpha = 0.88;
+      ctx.shadowBlur = width * 0.7;
+      ctx.lineWidth = width * pulse;
+      ctx.beginPath();
+      ctx.moveTo(segment.x1, segment.y1);
+      ctx.lineTo(segment.x2, segment.y2);
+      ctx.stroke();
+      ctx.globalAlpha = 0.92;
+      ctx.strokeStyle = '#ffffff';
+      ctx.shadowBlur = width * 0.5;
+      ctx.lineWidth = Math.max(2, width * 0.19);
+      ctx.beginPath();
+      ctx.moveTo(segment.x1, segment.y1);
+      ctx.lineTo(segment.x2, segment.y2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = owner.color;
+      ctx.shadowColor = owner.color;
+      ctx.shadowBlur = width * 1.5;
+      ctx.beginPath();
+      ctx.arc(segment.x2, segment.y2, Math.max(4, width * 0.42), 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     });
@@ -1953,6 +2415,31 @@
     ctx.fill();
   }
 
+  function drawShieldIndicator(fighter, visualY) {
+    if (!fighter.shield || fighter.shield.health <= 0) return;
+    const ratio = Math.max(0, Math.min(1, fighter.shield.health / fighter.shield.maxHealth));
+    const radius = fighter.size * 0.78;
+    const lineWidth = Math.max(1.7, fighter.size * 0.045);
+    ctx.save();
+    ctx.translate(fighter.x, visualY);
+    ctx.lineWidth = lineWidth;
+    ctx.lineCap = 'round';
+    ctx.setLineDash([fighter.size * 0.14, fighter.size * 0.09]);
+    ctx.strokeStyle = 'rgba(105, 212, 255, 0.42)';
+    ctx.beginPath();
+    ctx.arc(0, 0, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 0.65 + ratio * 0.35;
+    ctx.strokeStyle = ITEM_DEFINITIONS.shield.color;
+    ctx.shadowColor = ITEM_DEFINITIONS.shield.color;
+    ctx.shadowBlur = fighter.size * 0.16;
+    ctx.beginPath();
+    ctx.arc(0, 0, radius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ratio);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   function drawEye(x, y, width, height, pupilX = 0, pupilY = 0) {
     ctx.fillStyle = '#fff';
     ctx.beginPath();
@@ -2165,6 +2652,7 @@
       : 'idle';
 
     drawBackgroundAura(fighter, time);
+    drawShieldIndicator(fighter, visualY);
     ctx.save();
     ctx.globalAlpha = 0.28;
     ctx.fillStyle = '#030817';
@@ -2201,10 +2689,14 @@
     else if (mood === 'dizzy') drawDizzyFace(size, time);
     else drawPersonalityFace(fighter, size, lookX, lookY);
 
-    if (mood === 'hurt') {
+    if (mood === 'hurt' && fighter.lastDamage > 0) {
       ctx.fillStyle = '#ff5b70';
       ctx.font = `900 ${Math.max(7, size * 0.18)}px system-ui`;
       ctx.fillText(`-${fighter.lastDamage}`, half * 0.68, -half * 0.57);
+    } else if (mood === 'hurt') {
+      ctx.fillStyle = ITEM_DEFINITIONS.shield.color;
+      ctx.font = `900 ${Math.max(8, size * 0.2)}px system-ui`;
+      ctx.fillText('✧', half * 0.68, -half * 0.57);
     } else if (mood === 'wall' || mood === 'obstacle') {
       ctx.fillStyle = 'rgba(255,255,255,.92)';
       ctx.font = `800 ${Math.max(7, size * 0.2)}px system-ui`;
@@ -2305,6 +2797,29 @@
     number.addEventListener('change', fromNumber);
   }
 
+  function addDecimalInputSync(range, number, output, min, max, precision = 1) {
+    const factor = 10 ** precision;
+    const format = (value) => Number(value).toFixed(precision);
+    const sync = (rawValue, fromNumber = false, commitNumber = false) => {
+      const fallback = Number(range.value) || min;
+      const parsed = Number(rawValue);
+      const value = Number.isFinite(parsed)
+        ? Math.round(Math.max(min, Math.min(max, parsed)) * factor) / factor
+        : fallback;
+      range.value = String(value);
+      if (!fromNumber || commitNumber) number.value = format(value);
+      output.value = format(value);
+      output.textContent = format(value);
+    };
+    range.addEventListener('input', () => sync(range.value));
+    number.addEventListener('input', () => {
+      if (number.value !== '') sync(number.value, true);
+    });
+    number.addEventListener('change', () => {
+      if (number.value !== '') sync(number.value, true, true);
+    });
+  }
+
   function readFormConfig() {
     return normalizeMatchConfig({
       blockCount: blockCountNumber.value,
@@ -2312,6 +2827,7 @@
       obstacleCount: obstacleCountNumber.value,
       mapType: mapTypeSelect.value,
       collisionAcceleration: collisionAccelerationToggle.checked,
+      speedMultiplier: moveSpeedNumber.value,
     }, activeConfig);
   }
 
@@ -2324,6 +2840,10 @@
     blockHealthNumber.value = String(config.blockHealth);
     blockHealthOutput.value = String(config.blockHealth);
     blockHealthOutput.textContent = String(config.blockHealth);
+    moveSpeedRange.value = String(config.speedMultiplier);
+    moveSpeedNumber.value = config.speedMultiplier.toFixed(1);
+    moveSpeedOutput.value = config.speedMultiplier.toFixed(1);
+    moveSpeedOutput.textContent = config.speedMultiplier.toFixed(1);
     obstacleCountRange.value = String(config.obstacleCount);
     obstacleCountNumber.value = String(config.obstacleCount);
     obstacleCountOutput.value = String(config.obstacleCount);
@@ -2353,6 +2873,14 @@
 
   addFormInputSync(blockCountRange, blockCountNumber, blockCountOutput, MATCH_LIMITS.blockCount.min, MATCH_LIMITS.blockCount.max);
   addFormInputSync(blockHealthRange, blockHealthNumber, blockHealthOutput, MATCH_LIMITS.blockHealth.min, MATCH_LIMITS.blockHealth.max);
+  addDecimalInputSync(
+    moveSpeedRange,
+    moveSpeedNumber,
+    moveSpeedOutput,
+    MATCH_LIMITS.speedMultiplier.min,
+    MATCH_LIMITS.speedMultiplier.max,
+    1,
+  );
   addFormInputSync(obstacleCountRange, obstacleCountNumber, obstacleCountOutput, MATCH_LIMITS.obstacleCount.min, MATCH_LIMITS.obstacleCount.max);
   applySettingsButton.addEventListener('click', () => startMatch(readFormConfig()));
   defaultSettingsButton.addEventListener('click', () => {
@@ -2377,6 +2905,7 @@
         eliminations: match.eliminations,
         itemUses: match.itemUses,
         projectileHits: match.projectileHits,
+        laserHits: match.laserHits,
         c4Detonations: match.c4Detonations,
       },
       items: getItemSystemSnapshot(),
@@ -2389,6 +2918,7 @@
         face: fighter.faceMood,
         health: fighter.health,
         maxHealth: fighter.maxHealth,
+        shield: fighter.shield ? { ...fighter.shield } : null,
         eliminated: fighter.eliminated,
         heldItems: fighter.heldItems.map((item) => item.type),
       })),
@@ -2406,7 +2936,7 @@
   });
 
   window.BlockBounce = Object.freeze({
-    version: '0.6.0',
+    version: '0.7.0',
     defaults: DEFAULT_MATCH_CONFIG,
     limits: MATCH_LIMITS,
     itemRules: ITEM_RULES,
