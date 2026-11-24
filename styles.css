@@ -235,8 +235,12 @@ h1, h2, p { margin: 0; }
 .roster-chip.is-eliminated { opacity: 0.46; filter: grayscale(0.85); }
 .roster-chip.is-eliminated .roster-copy strong { text-decoration: line-through; }
 .roster-copy .roster-items { max-width: 100%; color: #71849f; font-size: 6px; font-weight: 750; letter-spacing: 0.01em; }
-.roster-copy .roster-shield { max-width: 100%; color: #4d9cb9; font-size: 6px; font-weight: 800; letter-spacing: 0.01em; }
+.roster-copy .roster-shield { max-width: 100%; color: #398cad; font-size: 7px; font-weight: 820; letter-spacing: 0.01em; }
 .roster-chip.has-shield .roster-swatch { box-shadow: 0 0 0 2px rgba(105, 212, 255, 0.38), 0 2px 6px rgba(61, 78, 108, 0.15); }
+.roster-chip.is-zombie { border-color: rgba(213, 68, 89, 0.25); background: rgba(255, 243, 245, 0.68); }
+.roster-chip.is-zombie .roster-copy strong { color: #9d4955; }
+.roster-chip.is-slowed .roster-mood { color: #3989a4; }
+.roster-chip.has-adrenaline .roster-mood { color: #c65e49; }
 .item-status { display: flex; min-height: 25px; align-items: center; gap: 6px; margin: -4px 1px 9px; padding: 5px 9px; border: 1px solid rgba(114, 162, 198, 0.16); border-radius: 8px; color: #617c98; background: rgba(233, 245, 255, 0.76); font-size: 8px; font-weight: 750; font-variant-numeric: tabular-nums; }
 .item-status::before { content: '✦'; color: #5fa8d5; font-size: 10px; }
 .item-status.is-cooling { border-color: rgba(255, 183, 82, 0.3); color: #98723d; background: rgba(255, 249, 232, 0.9); }
@@ -402,6 +406,9 @@ h1, h2, p { margin: 0; }
 .c4-symbol { color: #438a70; background: #e7f8f0; font-size: 9px; }
 .shield-symbol { color: #368bad; background: #e5f8ff; }
 .laser-symbol { color: #8367d1; background: #f0eaff; }
+.wand-symbol { color: #8064bc; background: #f0eaff; }
+.adrenaline-symbol { color: #d65c4d; background: #fff0ea; }
+.ice-symbol { color: #3988a2; background: #e7faff; }
 .rule-row > span:last-child { display: grid; min-width: 0; gap: 2px; }
 .rule-row strong { color: #596780; font-size: 9px; font-weight: 760; }
 .rule-row small { color: #91a0b3; font-size: 8px; line-height: 1.4; }

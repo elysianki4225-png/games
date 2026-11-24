@@ -114,6 +114,20 @@
     laserDuration: 2,
     laserWidthCells: 0.28,
     laserAimCellsPerSecond: 30,
+    zombieCount: 3,
+    zombieHealth: 50,
+    zombieDamage: 5,
+    zombieAttackInterval: 0.85,
+    zombieSpeedCellsPerSecond: 2.8,
+    adrenalineDuration: 5,
+    adrenalineSpeedMultiplier: 1.75,
+    adrenalineDamageReduction: 0.5,
+    iceShooterDuration: 3,
+    iceShotInterval: 0.5,
+    iceDamage: 10,
+    iceSlowFactor: 0.5,
+    iceSlowDuration: 2,
+    icePeaCellsPerSecond: 12,
     refillInterval: 6,
     c4Damage: 20,
     c4RadiusCells: 2,
@@ -136,6 +150,9 @@
     c4: Object.freeze({ name: 'C4', shortName: 'C4', icon: 'C4', color: '#67d6a9', group: 'contact' }),
     shield: Object.freeze({ name: '盾牌', shortName: '盾', icon: '⬟', color: '#69d4ff', group: 'passive' }),
     laser: Object.freeze({ name: '激光枪', shortName: '激光', icon: '⚡', color: '#bd8bff', group: 'ranged' }),
+    wand: Object.freeze({ name: '召唤法杖', shortName: '法杖', icon: '✦', color: '#a789ff', group: 'ranged' }),
+    adrenaline: Object.freeze({ name: '肾上腺素', shortName: '肾上腺素', icon: '⚡', color: '#ff745e', group: 'ranged' }),
+    iceShooter: Object.freeze({ name: '寒冰射手', shortName: '寒冰', icon: '❄', color: '#7de5ff', group: 'ranged' }),
   });
   const ITEM_TYPES = Object.keys(ITEM_DEFINITIONS);
   const BORDER = 7;
@@ -285,6 +302,8 @@
       fighter.x *= scaleX;
       fighter.y *= scaleY;
       fighter.size = blockSizeForCount(match.config.blockCount);
+      fighter.pursuitWaypoint = null;
+      fighter.pursuitTargetId = null;
       keepInside(fighter, false);
     });
     rebuildObstaclesForResize();
@@ -462,6 +481,15 @@
       radiationTimers: new Map(),
       heldItems: [],
       shield: null,
+      isZombie: false,
+      summonerId: null,
+      zombieAttackTimers: new Map(),
+      pursuitWaypoint: null,
+      pursuitTargetId: null,
+      adrenalineRemaining: 0,
+      slowRemaining: 0,
+      slowFactor: 1,
+      damageNumber: null,
       lastDamage: 0,
       angle,
       faceMood: 'idle',
@@ -473,46 +501,82 @@
     };
   }
 
+  function createZombie(summoner, index) {
+    const hue = summoner.hue;
+    const appearance = {
+      color: hslColor(hue, 82, 28),
+      light: hslColor(hue, 78, 41),
+      dark: hslColor(hue, 86, 16),
+      glow: hslColor(hue, 90, 39, 0.32),
+      hue,
+    };
+    const zombie = createFighter(appearance, match.fighters.length, match.config.blockCount, match.fighters);
+    const angle = summoner.angle + index * Math.PI * 2 / ITEM_RULES.zombieCount;
+    const bounds = nearestWallBounds(zombie);
+    const distance = summoner.size * 0.9;
+    zombie.id = `zombie-${match.nextZombieId++}`;
+    zombie.name = `${summoner.name} 僵尸${index + 1}`;
+    zombie.isZombie = true;
+    zombie.summonerId = summoner.id;
+    zombie.idle = '红眼追猎';
+    zombie.maxHealth = ITEM_RULES.zombieHealth;
+    zombie.health = ITEM_RULES.zombieHealth;
+    zombie.heldItems = [];
+    zombie.shield = null;
+    zombie.x = Math.max(bounds.minX, Math.min(bounds.maxX, summoner.x + Math.cos(angle) * distance));
+    zombie.y = Math.max(bounds.minY, Math.min(bounds.maxY, summoner.y + Math.sin(angle) * distance));
+    zombie.previousX = zombie.x;
+    zombie.previousY = zombie.y;
+    zombie.vx = Math.cos(angle) * world.cell * ITEM_RULES.zombieSpeedCellsPerSecond * match.config.speedMultiplier;
+    zombie.vy = Math.sin(angle) * world.cell * ITEM_RULES.zombieSpeedCellsPerSecond * match.config.speedMultiplier;
+    zombie.angle = angle;
+    return zombie;
+  }
+
+  function createRosterChip(fighter) {
+    const chip = document.createElement('div');
+    chip.className = 'roster-chip';
+    chip.dataset.character = fighter.id;
+    chip.style.setProperty('--character-color', fighter.color);
+    chip.classList.toggle('is-zombie', Boolean(fighter.isZombie));
+    chip.setAttribute('aria-label', `${fighter.name}，${fighter.idle}，${fighter.health} HP`);
+
+    const swatch = document.createElement('span');
+    swatch.className = 'roster-swatch';
+    swatch.setAttribute('aria-hidden', 'true');
+    const copy = document.createElement('span');
+    copy.className = 'roster-copy';
+    const name = document.createElement('strong');
+    name.textContent = fighter.name;
+    const mood = document.createElement('small');
+    mood.className = 'roster-mood';
+    mood.textContent = fighter.idle;
+    const healthRow = document.createElement('span');
+    healthRow.className = 'roster-health-row';
+    const healthValue = document.createElement('small');
+    healthValue.className = 'roster-health-value';
+    healthValue.textContent = `${fighter.health} HP`;
+    const healthTrack = document.createElement('span');
+    healthTrack.className = 'roster-health-track';
+    const healthFill = document.createElement('i');
+    healthFill.className = 'roster-health-fill';
+    healthTrack.append(healthFill);
+    healthRow.append(healthValue, healthTrack);
+    const heldItems = document.createElement('small');
+    heldItems.className = 'roster-items';
+    heldItems.textContent = '手持 —';
+    const shieldStatus = document.createElement('small');
+    shieldStatus.className = 'roster-shield';
+    shieldStatus.textContent = '护盾 —';
+    copy.append(name, mood, healthRow, heldItems, shieldStatus);
+    chip.append(swatch, copy);
+    roster.append(chip);
+    return chip;
+  }
+
   function createRoster() {
     roster.replaceChildren();
-    match.fighters.forEach((fighter) => {
-      const chip = document.createElement('div');
-      chip.className = 'roster-chip';
-      chip.dataset.character = fighter.id;
-      chip.style.setProperty('--character-color', fighter.color);
-      chip.setAttribute('aria-label', `${fighter.name}，${fighter.idle}，${fighter.health} HP`);
-
-      const swatch = document.createElement('span');
-      swatch.className = 'roster-swatch';
-      swatch.setAttribute('aria-hidden', 'true');
-      const copy = document.createElement('span');
-      copy.className = 'roster-copy';
-      const name = document.createElement('strong');
-      name.textContent = fighter.name;
-      const mood = document.createElement('small');
-      mood.className = 'roster-mood';
-      mood.textContent = fighter.idle;
-      const healthRow = document.createElement('span');
-      healthRow.className = 'roster-health-row';
-      const healthValue = document.createElement('small');
-      healthValue.className = 'roster-health-value';
-      healthValue.textContent = `${fighter.health} HP`;
-      const healthTrack = document.createElement('span');
-      healthTrack.className = 'roster-health-track';
-      const healthFill = document.createElement('i');
-      healthFill.className = 'roster-health-fill';
-      healthTrack.append(healthFill);
-      healthRow.append(healthValue, healthTrack);
-      const heldItems = document.createElement('small');
-      heldItems.className = 'roster-items';
-      heldItems.textContent = '手持 —';
-      const shieldStatus = document.createElement('small');
-      shieldStatus.className = 'roster-shield';
-      shieldStatus.textContent = '护盾 —';
-      copy.append(name, mood, healthRow, heldItems, shieldStatus);
-      chip.append(swatch, copy);
-      roster.append(chip);
-    });
+    match.fighters.forEach(createRosterChip);
   }
 
   function resetEventFeed() {
@@ -561,11 +625,14 @@
       projectiles: [],
       flames: [],
       lasers: [],
+      iceShooters: [],
       c4Charges: [],
       itemEffects: [],
       hostilityScores: new Map(),
       simulationTime: 0,
       nextItemId: 1,
+      nextZombieId: 1,
+      nextIceShooterId: 1,
       itemSpawnCooldown: 0,
       itemUseReadyAt: 0,
       itemUses: 0,
@@ -623,6 +690,8 @@
       if (fighter.faceMood === 'obstacle') return '撞到障碍';
       if (fighter.faceMood === 'dizzy') return '晕乎乎';
     }
+    if (fighter.slowRemaining > 0) return '冰冻减速';
+    if (fighter.adrenalineRemaining > 0) return '肾上腺素';
     return fighter.idle;
   }
 
@@ -650,15 +719,24 @@
         ? `护盾 ${shieldHealth}/${fighter.shield.maxHealth} HP`
         : '护盾 —';
       chip.classList.toggle('has-shield', Boolean(fighter.shield));
+      chip.classList.toggle('is-zombie', fighter.isZombie);
+      chip.classList.toggle('is-slowed', fighter.slowRemaining > 0);
+      chip.classList.toggle('has-adrenaline', fighter.adrenalineRemaining > 0);
       chip.classList.toggle('is-reacting', fighter.faceMood !== 'idle' && now < fighter.moodUntil);
       chip.classList.toggle('is-critical', !fighter.eliminated && ratio <= 0.25);
       chip.classList.toggle('is-eliminated', fighter.eliminated);
-      chip.setAttribute('aria-label', `${fighter.name}，${label}，${Math.ceil(fighter.health)} / ${fighter.maxHealth} HP，手持道具 ${heldItemsLabel}，${fighter.shield ? `护盾 ${shieldHealth} / ${fighter.shield.maxHealth} HP` : '无护盾'}`);
+      const roleLabel = fighter.isZombie ? `僵尸，召唤者 ${fighter.summonerId || '未知'}` : '方块';
+      const effectLabels = [
+        fighter.adrenalineRemaining > 0 ? `肾上腺素 ${fighter.adrenalineRemaining.toFixed(1)} 秒` : '',
+        fighter.slowRemaining > 0 ? `减速 ${fighter.slowRemaining.toFixed(1)} 秒` : '',
+      ].filter(Boolean).join('，');
+      chip.setAttribute('aria-label', `${fighter.name}，${roleLabel}，${label}，${Math.ceil(fighter.health)} / ${fighter.maxHealth} HP，手持道具 ${heldItemsLabel}，${fighter.shield ? `护盾 ${shieldHealth} / ${fighter.shield.maxHealth} HP` : '无护盾'}${effectLabels ? `，${effectLabels}` : ''}`);
     });
     const livingCount = match.fighters.filter((fighter) => !fighter.eliminated).length;
+    const livingPlayerCount = match.fighters.filter((fighter) => !fighter.eliminated && !fighter.isZombie).length;
     aliveCount.textContent = String(livingCount);
-    if (!match.paused && !match.ended && livingCount === 1) {
-      const survivor = match.fighters.find((fighter) => !fighter.eliminated);
+    if (!match.paused && !match.ended && livingPlayerCount === 1) {
+      const survivor = match.fighters.find((fighter) => !fighter.eliminated && !fighter.isZombie);
       matchState.querySelector('span').textContent = survivor ? `${survivor.name} · 最后一位` : '对局结束';
     } else if (!match.paused && !match.ended) {
       matchState.querySelector('span').textContent = MAP_DEFINITIONS[match.config.mapType].status;
@@ -834,10 +912,19 @@
     return entry.score * Math.exp(-Math.max(0, match.simulationTime - entry.time) / 8);
   }
 
+  function formatHealthAmount(value) {
+    const rounded = Math.round(value * 10) / 10;
+    return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+  }
+
   function applyDamage(fighter, amount, source, announce = true, attackerId = null) {
     if (!fighter || fighter.eliminated || amount <= 0) return 0;
-    const damage = Math.max(1, Math.round(amount));
     const attacker = attackerId ? match.fighters.find((item) => item.id === attackerId) : null;
+    if (attacker && areSummonAllies(attacker, fighter)) return 0;
+    const baseDamage = Math.max(1, Math.round(amount));
+    const damage = fighter.adrenalineRemaining > 0
+      ? baseDamage * (1 - ITEM_RULES.adrenalineDamageReduction)
+      : baseDamage;
     if (attacker) recordHostility(fighter, attacker, Math.max(1, damage / 5));
 
     let healthDamage = damage;
@@ -854,6 +941,15 @@
     }
 
     fighter.lastDamage = healthDamage;
+    fighter.damageNumber = {
+      amount: damage,
+      source,
+      shielded: shieldDamage > 0,
+      shieldDamage,
+      healthDamage,
+      remaining: 0.82,
+      maxRemaining: 0.82,
+    };
     if (healthDamage > 0) fighter.health = Math.max(0, fighter.health - healthDamage);
     setMood(fighter, 'hurt', 700);
     addBurst(
@@ -866,13 +962,14 @@
     const sourceLabel = ({
       radiation: '辐射坑', cactus: '仙人掌', knife: '刀', pistol: '手枪',
       shotgun: '霰弹枪', sniper: '狙击枪', flamethrower: '喷火器', c4: 'C4 爆炸', laser: '激光',
+      zombie: '僵尸', iceShooter: '寒冰射手',
     })[source] || '对手';
     if (announce && shieldDamage > 0) {
-      const healthText = healthDamage > 0 ? `，生命 -${healthDamage} HP` : '，生命未受伤';
+      const healthText = healthDamage > 0 ? `，生命 -${formatHealthAmount(healthDamage)} HP` : '，生命未受伤';
       const brokenText = shieldBroken ? '，护盾破裂' : '';
-      addEvent(`${fighter.name} 的护盾挡下${sourceLabel} ${shieldDamage} 伤害${healthText}${brokenText}`, ITEM_DEFINITIONS.shield.color);
+      addEvent(`${fighter.name} 的护盾挡下${sourceLabel} ${formatHealthAmount(shieldDamage)} 伤害${healthText}${brokenText}`, ITEM_DEFINITIONS.shield.color);
     } else if (announce && healthDamage > 0) {
-      addEvent(`${fighter.name} 受到${sourceLabel}伤害 -${healthDamage} HP`, '#ff8292');
+      addEvent(`${fighter.name} 受到${sourceLabel}伤害 -${formatHealthAmount(healthDamage)} HP`, '#ff8292');
     }
 
     if (fighter.health <= 0) {
@@ -887,11 +984,38 @@
     fighter.health = 0;
     fighter.eliminated = true;
     fighter.shield = null;
+    fighter.damageNumber = null;
+    fighter.adrenalineRemaining = 0;
+    fighter.slowRemaining = 0;
+    fighter.slowFactor = 1;
+    fighter.zombieAttackTimers?.clear();
+    fighter.pursuitWaypoint = null;
+    fighter.pursuitTargetId = null;
     dropHeldItems(fighter);
     fighter.faceMood = 'idle';
     match.eliminations += 1;
     addBurst(fighter.x, fighter.y, [fighter.color, '#ffffff', '#ff7184'], 18);
     addEvent(`${fighter.name} 血量耗尽，淘汰出局`, fighter.color);
+    if (!fighter.isZombie) {
+      match.fighters.filter((item) => item.isZombie && item.summonerId === fighter.id && !item.eliminated)
+        .forEach((zombie) => {
+          zombie.health = 0;
+          zombie.eliminated = true;
+          zombie.shield = null;
+          zombie.damageNumber = null;
+          zombie.adrenalineRemaining = 0;
+          zombie.slowRemaining = 0;
+          zombie.slowFactor = 1;
+          zombie.zombieAttackTimers?.clear();
+          zombie.pursuitWaypoint = null;
+          zombie.pursuitTargetId = null;
+          zombie.faceMood = 'idle';
+          dropHeldItems(zombie);
+          match.eliminations += 1;
+          addBurst(zombie.x, zombie.y, [zombie.color, '#caeef8', '#ffffff'], 10);
+          addEvent(`${zombie.name} 随召唤者倒下而消散`, zombie.color);
+        });
+    }
     const livingCount = match.fighters.filter((item) => !item.eliminated).length;
     if (livingCount === 0) {
       match.ended = true;
@@ -1034,6 +1158,7 @@
     match.projectiles = [];
     match.flames = [];
     match.lasers = [];
+    match.iceShooters = [];
     match.c4Charges = [];
     match.itemEffects = [];
     match.itemUseReadyAt = match.simulationTime;
@@ -1048,6 +1173,7 @@
     match.projectiles = [];
     match.flames = [];
     match.lasers = [];
+    match.iceShooters = [];
     match.c4Charges = [];
     match.itemEffects = [];
   }
@@ -1075,6 +1201,21 @@
         target: laser.targetId,
         remaining: Number(laser.remaining.toFixed(3)),
         angle: Number(laser.angle.toFixed(4)),
+      })),
+      zombies: match.fighters.filter((fighter) => fighter.isZombie && !fighter.eliminated).map((fighter) => ({
+        id: fighter.id,
+        summoner: fighter.summonerId,
+        health: fighter.health,
+        color: fighter.color,
+      })),
+      iceShooters: match.iceShooters.map((iceShooter) => ({
+        id: iceShooter.id,
+        owner: iceShooter.ownerId,
+        target: iceShooter.targetId,
+        x: iceShooter.x,
+        y: iceShooter.y,
+        remaining: Number(iceShooter.remaining.toFixed(3)),
+        shotCooldown: Number(iceShooter.shotCooldown.toFixed(3)),
       })),
       attachedC4: match.c4Charges.length,
     };
@@ -1125,7 +1266,7 @@
     let changed = false;
     const remaining = [];
     match.items.forEach((pickup) => {
-      const collector = match.fighters.find((fighter) => !fighter.eliminated
+      const collector = match.fighters.find((fighter) => !fighter.eliminated && !fighter.isZombie
         && Math.hypot(fighter.x - pickup.x, fighter.y - pickup.y) <= fighter.size / 2 + pickup.radius);
       if (!collector) {
         remaining.push(pickup);
@@ -1171,9 +1312,17 @@
     syncItemHud();
   }
 
+  function areSummonAllies(first, second) {
+    if (!first || !second) return false;
+    return first.id === second.id
+      || first.summonerId === second.id
+      || second.summonerId === first.id
+      || (first.isZombie && second.isZombie && first.summonerId === second.summonerId);
+  }
+
   function pickHostileTarget(shooter) {
     if (!match || !shooter || shooter.eliminated) return null;
-    const candidates = match.fighters.filter((fighter) => !fighter.eliminated && fighter.id !== shooter.id);
+    const candidates = match.fighters.filter((fighter) => !fighter.eliminated && !areSummonAllies(shooter, fighter));
     if (!candidates.length) return null;
     const scored = candidates.map((fighter) => ({
       fighter,
@@ -1238,20 +1387,22 @@
     return itemCooldownRemaining() <= 0.001;
   }
 
-  function fireProjectile(owner, type, target, angle, damage, speed) {
+  function fireProjectile(owner, type, target, angle, damage, speed, origin = null) {
     if (!target || target.eliminated || owner.eliminated) return false;
     const definition = ITEM_DEFINITIONS[type];
-    const nose = owner.size * 0.52 + 4;
+    const originX = Number.isFinite(origin?.x) ? origin.x : owner.x;
+    const originY = Number.isFinite(origin?.y) ? origin.y : owner.y;
+    const nose = origin ? 0 : owner.size * 0.52 + 4;
     match.projectiles.push({
       id: `shot-${match.nextItemId++}`,
       type,
       ownerId: owner.id,
       targetId: target.id,
-      x: owner.x + Math.cos(angle) * nose,
-      y: owner.y + Math.sin(angle) * nose,
+      x: originX + Math.cos(angle) * nose,
+      y: originY + Math.sin(angle) * nose,
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
-      radius: Math.max(2.2, world.cell * (type === 'sniper' ? 0.075 : 0.06)),
+      radius: Math.max(2.2, world.cell * (type === 'sniper' ? 0.075 : (type === 'iceShooter' ? 0.09 : 0.06))),
       damage,
       life: ITEM_RULES.projectileLifetime,
       color: definition.color,
@@ -1287,6 +1438,55 @@
       angle: Math.atan2(aimPoint.y - owner.y, aimPoint.x - owner.x),
       remaining: ITEM_RULES.laserDuration,
     });
+    return true;
+  }
+
+  function summonZombies(owner) {
+    if (!owner || owner.eliminated || owner.isZombie) return false;
+    const summoned = [];
+    for (let index = 0; index < ITEM_RULES.zombieCount; index += 1) {
+      const zombie = createZombie(owner, index);
+      match.fighters.push(zombie);
+      createRosterChip(zombie);
+      summoned.push(zombie);
+    }
+    syncHud();
+    summoned.forEach((zombie) => addBurst(zombie.x, zombie.y, [zombie.color, '#ff354e', '#d9f7ff'], 7));
+    addEvent(`${owner.name} 召唤了 3 个 50 HP 红眼僵尸`, ITEM_DEFINITIONS.wand.color);
+    showToast(`${owner.name}：僵尸听我号令！`);
+    return true;
+  }
+
+  function activateAdrenaline(owner) {
+    if (!owner || owner.eliminated) return false;
+    owner.adrenalineRemaining = ITEM_RULES.adrenalineDuration;
+    addBurst(owner.x, owner.y, ['#ff604e', '#ffd166', '#ffffff'], 12);
+    addEvent(`${owner.name} 注射肾上腺素：速度 +75%，减伤 50%（5 秒）`, ITEM_DEFINITIONS.adrenaline.color);
+    showToast(`${owner.name} 肾上腺素爆发！`);
+    return true;
+  }
+
+  function deployIceShooter(owner) {
+    if (!owner || owner.eliminated) return false;
+    const size = Math.max(12, world.cell * 0.25);
+    const sideAngle = owner.angle + Math.PI / 2;
+    const offset = owner.size * 0.82;
+    const x = Math.max(world.border + size, Math.min(world.width - world.border - size, owner.x + Math.cos(sideAngle) * offset));
+    const y = Math.max(world.border + size, Math.min(world.height - world.border - size, owner.y + Math.sin(sideAngle) * offset));
+    match.iceShooters.push({
+      id: `ice-shooter-${match.nextIceShooterId++}`,
+      name: `${owner.name} 的寒冰射手`,
+      ownerId: owner.id,
+      x,
+      y,
+      targetId: null,
+      remaining: ITEM_RULES.iceShooterDuration,
+      shotCooldown: ITEM_RULES.iceShotInterval,
+      phase: Math.random() * Math.PI * 2,
+    });
+    addBurst(x, y, ['#7de5ff', '#d7fbff', '#ffffff'], 10);
+    addEvent(`${owner.name} 放下寒冰射手（3 秒）`, ITEM_DEFINITIONS.iceShooter.color);
+    showToast(`${owner.name} 部署了寒冰射手`);
     return true;
   }
 
@@ -1338,6 +1538,12 @@
         addEvent(`${owner.name} 发射穿透激光，自动锁定 ${enemy.name}（2 秒）`, owner.color);
         showToast(`${owner.name} 的激光开始扫射！`);
       }
+    } else if (item.type === 'wand') {
+      used = summonZombies(owner);
+    } else if (item.type === 'adrenaline') {
+      used = activateAdrenaline(owner);
+    } else if (item.type === 'iceShooter') {
+      used = deployIceShooter(owner);
     } else {
       const enemy = pickHostileTarget(owner);
       if (!enemy) return false;
@@ -1444,9 +1650,18 @@
     return (px - nearestX) ** 2 + (py - nearestY) ** 2;
   }
 
+  function applySlow(fighter, duration, factor = 0.5) {
+    if (!fighter || fighter.eliminated) return false;
+    fighter.slowRemaining = Math.max(fighter.slowRemaining || 0, duration);
+    fighter.slowFactor = Math.min(fighter.slowFactor || 1, factor);
+    addBurst(fighter.x, fighter.y, ['#7de5ff', '#d7fbff', '#ffffff'], 4);
+    return true;
+  }
+
   function updateProjectiles(dt) {
     const remaining = [];
     match.projectiles.forEach((projectile) => {
+      const owner = match.fighters.find((fighter) => fighter.id === projectile.ownerId);
       const travelTime = Math.min(dt, projectile.life);
       const previousX = projectile.x;
       const previousY = projectile.y;
@@ -1455,7 +1670,7 @@
       projectile.life -= dt;
       let hitTarget = null;
       for (const fighter of match.fighters) {
-        if (fighter.eliminated || fighter.id === projectile.ownerId) continue;
+        if (fighter.eliminated || fighter.id === projectile.ownerId || (owner && areSummonAllies(owner, fighter))) continue;
         const hitRadius = fighter.size / 2 + projectile.radius;
         const targetStartX = Number.isFinite(fighter.previousX) ? fighter.previousX : fighter.x;
         const targetStartY = Number.isFinite(fighter.previousY) ? fighter.previousY : fighter.y;
@@ -1473,7 +1688,12 @@
         const damage = applyDamage(hitTarget, projectile.damage, projectile.type, true, projectile.ownerId);
         match.projectileHits += 1;
         addBurst(projectile.x, projectile.y, [projectile.color, hitTarget.color, '#ffffff'], 7);
-        addEvent(`${hitTarget.name} 被${ITEM_DEFINITIONS[projectile.type].name}命中（-${damage} HP）`, projectile.color);
+        if (projectile.type === 'iceShooter' && !hitTarget.eliminated) {
+          applySlow(hitTarget, ITEM_RULES.iceSlowDuration, ITEM_RULES.iceSlowFactor);
+          addEvent(`${hitTarget.name} 被冰豌豆命中（-${formatHealthAmount(damage)} HP，减速 50%）`, projectile.color);
+        } else {
+          addEvent(`${hitTarget.name} 被${ITEM_DEFINITIONS[projectile.type].name}命中（-${formatHealthAmount(damage)} HP）`, projectile.color);
+        }
         return;
       }
       const inBounds = projectile.x >= world.border - 24 && projectile.x <= world.width - world.border + 24
@@ -1481,6 +1701,32 @@
       if (projectile.life > 0 && inBounds) remaining.push(projectile);
     });
     match.projectiles = remaining;
+  }
+
+  function updateIceShooters(dt) {
+    const remaining = [];
+    match.iceShooters.forEach((iceShooter) => {
+      const owner = match.fighters.find((fighter) => fighter.id === iceShooter.ownerId);
+      if (!owner || owner.eliminated) return;
+      const activeStep = Math.min(dt, iceShooter.remaining);
+      iceShooter.shotCooldown -= activeStep;
+      while (iceShooter.shotCooldown <= 1e-6 && iceShooter.remaining > 1e-6) {
+        const target = pickHostileTarget(owner);
+        if (target) {
+          const speed = world.cell * ITEM_RULES.icePeaCellsPerSecond;
+          const aimPoint = predictInterceptPoint(iceShooter, target, speed);
+          iceShooter.targetId = target.id;
+          const angle = Math.atan2(aimPoint.y - iceShooter.y, aimPoint.x - iceShooter.x);
+          fireProjectile(owner, 'iceShooter', target, angle, ITEM_RULES.iceDamage, speed, iceShooter);
+          addEvent(`${iceShooter.name || '寒冰射手'} 预判 ${target.name} 发射冰豌豆`, ITEM_DEFINITIONS.iceShooter.color);
+        }
+        iceShooter.shotCooldown += ITEM_RULES.iceShotInterval;
+      }
+      iceShooter.remaining = Math.max(0, iceShooter.remaining - dt);
+      if (iceShooter.remaining > 1e-6) remaining.push(iceShooter);
+      else addEvent(`${owner.name} 的寒冰射手消失了`, ITEM_DEFINITIONS.iceShooter.color);
+    });
+    match.iceShooters = remaining;
   }
 
   function laserBeamSegment(owner, angle) {
@@ -1499,6 +1745,8 @@
     return { x1, y1, x2: x1 + dx * distance, y2: y1 + dy * distance };
   }
 
+  // updateItemSystem runs once per requestAnimationFrame; keep laser damage per update frame,
+  // independent of dt, so it follows the display's available frame rate.
   function updateLasers(dt) {
     const remaining = [];
     match.lasers.forEach((laser) => {
@@ -1517,7 +1765,7 @@
       const segment = laserBeamSegment(owner, laser.angle);
       const beamRadius = world.cell * ITEM_RULES.laserWidthCells / 2;
       match.fighters.forEach((fighter) => {
-        if (fighter.eliminated || fighter.id === owner.id) return;
+        if (fighter.eliminated || areSummonAllies(owner, fighter)) return;
         const hitRadius = fighter.size / 2 + beamRadius;
         if (pointSegmentDistanceSquared(fighter.x, fighter.y, segment.x1, segment.y1, segment.x2, segment.y2)
           > hitRadius * hitRadius) return;
@@ -1621,6 +1869,7 @@
     if (!match || !ITEM_SYSTEM_API.enabled) return;
     match.itemSpawnCooldown = Math.max(0, match.itemSpawnCooldown - dt);
     updateProjectiles(dt);
+    updateIceShooters(dt);
     updateLasers(dt);
     updateFlames(dt);
     updateC4Charges(dt);
@@ -1886,6 +2135,87 @@
       ctx.lineTo(1, -8);
       ctx.lineTo(5, -5);
       ctx.stroke();
+    } else if (type === 'wand') {
+      ctx.save();
+      ctx.rotate(-0.6);
+      ctx.strokeStyle = '#6c4f8d';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(0, 12);
+      ctx.lineTo(0, -8);
+      ctx.stroke();
+      ctx.strokeStyle = '#e5c98c';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(-1, 7);
+      ctx.lineTo(-1, -5);
+      ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 8;
+      ctx.beginPath();
+      ctx.arc(0, -10, 4.6 + Math.sin(time * 0.02) * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#ffffff';
+      drawStar(0, -10, 2.2, 1, 4);
+      ctx.restore();
+    } else if (type === 'adrenaline') {
+      ctx.save();
+      ctx.rotate(-0.25);
+      ctx.fillStyle = dark;
+      ctx.strokeStyle = '#fff0e8';
+      roundedRect(-9, -4.2, 17, 8.4, 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = color;
+      roundedRect(-5, -2.5, 10, 5, 1.3);
+      ctx.fill();
+      ctx.fillStyle = '#ffd3c6';
+      ctx.fillRect(-12, -2.3, 3, 4.6);
+      ctx.strokeStyle = '#e9f8ff';
+      ctx.lineWidth = 1.7;
+      ctx.beginPath();
+      ctx.moveTo(8, 0);
+      ctx.lineTo(14, 0);
+      ctx.stroke();
+      ctx.fillStyle = '#ffede2';
+      ctx.beginPath();
+      ctx.moveTo(14, -1.2);
+      ctx.lineTo(17, 0);
+      ctx.lineTo(14, 1.2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    } else if (type === 'iceShooter') {
+      ctx.fillStyle = '#3d996d';
+      ctx.strokeStyle = '#caffdf';
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.moveTo(-5, 8);
+      ctx.quadraticCurveTo(-13, 5, -14, 0);
+      ctx.quadraticCurveTo(-6, 0, -3, 5);
+      ctx.moveTo(-3, 9);
+      ctx.quadraticCurveTo(5, 4, 10, 7);
+      ctx.quadraticCurveTo(4, 12, -3, 9);
+      ctx.stroke();
+      ctx.fillStyle = '#a8f2ff';
+      ctx.strokeStyle = '#efffff';
+      ctx.beginPath();
+      ctx.arc(1, -2, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#55bdda';
+      roundedRect(5, -5, 10, 6, 2.5);
+      ctx.fill();
+      ctx.strokeStyle = '#d9fbff';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(12, -2);
+      ctx.lineTo(16, -2);
+      ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      drawStar(-1, -3, 2.3, 0.9, 6);
     }
 
     ctx.restore();
@@ -1953,6 +2283,29 @@
       ctx.lineTo(owner.size * 0.46, width * 0.38);
       ctx.closePath();
       ctx.fill();
+      ctx.restore();
+    });
+
+    match.iceShooters.forEach((iceShooter) => {
+      const definition = ITEM_DEFINITIONS.iceShooter;
+      const size = Math.max(12, world.cell * 0.25);
+      const progress = Math.max(0, Math.min(1, iceShooter.remaining / ITEM_RULES.iceShooterDuration));
+      ctx.save();
+      ctx.globalAlpha = 0.3;
+      ctx.fillStyle = definition.color;
+      ctx.beginPath();
+      ctx.ellipse(iceShooter.x, iceShooter.y + size * 0.26, size * 0.82, size * 0.34, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 0.88;
+      ctx.strokeStyle = 'rgba(230, 251, 255, 0.8)';
+      ctx.lineWidth = Math.max(1.5, world.cell * 0.035);
+      ctx.beginPath();
+      ctx.arc(iceShooter.x, iceShooter.y, size * 0.82, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
+      ctx.stroke();
+      ctx.save();
+      ctx.translate(iceShooter.x, iceShooter.y);
+      drawItemModel('iceShooter', definition.color, size, time + iceShooter.phase * 40);
+      ctx.restore();
       ctx.restore();
     });
 
@@ -2066,6 +2419,139 @@
     return match.radiationPits.some((pit) => isInsideRadiationPit(fighter, pit));
   }
 
+  function segmentAabbEntry(startX, startY, endX, endY, minX, minY, maxX, maxY) {
+    let entry = 0;
+    let exit = 1;
+    const axes = [
+      [startX, endX - startX, minX, maxX],
+      [startY, endY - startY, minY, maxY],
+    ];
+    for (const [origin, delta, minimum, maximum] of axes) {
+      if (Math.abs(delta) < 1e-9) {
+        if (origin <= minimum || origin >= maximum) return null;
+        continue;
+      }
+      let first = (minimum - origin) / delta;
+      let second = (maximum - origin) / delta;
+      if (first > second) [first, second] = [second, first];
+      entry = Math.max(entry, first);
+      exit = Math.min(exit, second);
+      if (entry >= exit) return null;
+    }
+    if (exit <= 1e-6 || entry >= 1 - 1e-6) return null;
+    return Math.max(0, entry);
+  }
+
+  function zombiePursuitPoint(zombie, target) {
+    const radius = zombie.size / 2;
+    const blockers = match.obstacles.filter((obstacle) => !obstacle.destroyed).map((obstacle) => ({
+      obstacle,
+      entry: segmentAabbEntry(
+        zombie.x, zombie.y, target.x, target.y,
+        obstacle.x - obstacle.width / 2 - radius,
+        obstacle.y - obstacle.height / 2 - radius,
+        obstacle.x + obstacle.width / 2 + radius,
+        obstacle.y + obstacle.height / 2 + radius,
+      ),
+    })).filter((entry) => entry.entry !== null).sort((first, second) => first.entry - second.entry);
+    if (!blockers.length) return target;
+
+    const blocker = blockers[0].obstacle;
+    const margin = Math.max(2, world.cell * 0.08);
+    const halfX = blocker.width / 2 + radius + margin;
+    const halfY = blocker.height / 2 + radius + margin;
+    const bounds = nearestWallBounds(zombie);
+    const corners = [
+      { x: blocker.x - halfX, y: blocker.y - halfY },
+      { x: blocker.x + halfX, y: blocker.y - halfY },
+      { x: blocker.x - halfX, y: blocker.y + halfY },
+      { x: blocker.x + halfX, y: blocker.y + halfY },
+    ].map((point) => ({
+      x: Math.max(bounds.minX, Math.min(bounds.maxX, point.x)),
+      y: Math.max(bounds.minY, Math.min(bounds.maxY, point.y)),
+      obstacleId: blocker.id,
+    }));
+
+    const reachable = corners.filter((point) => {
+      if (Math.hypot(point.x - zombie.x, point.y - zombie.y) < Math.max(2, world.cell * 0.1)) return false;
+      if (match.obstacles.some((obstacle) => !obstacle.destroyed
+        && obstacleOverlaps(point.x, point.y, zombie.size, obstacle, 1))) return false;
+      return !match.obstacles.some((obstacle) => !obstacle.destroyed
+        && !obstacleOverlaps(zombie.x, zombie.y, zombie.size, obstacle)
+        && segmentAabbEntry(
+          zombie.x, zombie.y, point.x, point.y,
+          obstacle.x - obstacle.width / 2 - radius,
+          obstacle.y - obstacle.height / 2 - radius,
+          obstacle.x + obstacle.width / 2 + radius,
+          obstacle.y + obstacle.height / 2 + radius,
+        ) !== null);
+    });
+    if (!reachable.length) return target;
+    reachable.sort((first, second) => (
+      Math.hypot(first.x - zombie.x, first.y - zombie.y) + Math.hypot(first.x - target.x, first.y - target.y)
+      - Math.hypot(second.x - zombie.x, second.y - zombie.y) - Math.hypot(second.x - target.x, second.y - target.y)
+    ));
+    return reachable[0];
+  }
+
+  function updateZombieAI(zombie, dt) {
+    if (!zombie?.isZombie || zombie.eliminated) return;
+    if (!(zombie.zombieAttackTimers instanceof Map)) zombie.zombieAttackTimers = new Map();
+    zombie.zombieAttackTimers.forEach((remaining, targetId) => {
+      if (remaining <= dt) zombie.zombieAttackTimers.delete(targetId);
+      else zombie.zombieAttackTimers.set(targetId, remaining - dt);
+    });
+
+    const target = pickHostileTarget(zombie);
+    if (!target) {
+      zombie.pursuitWaypoint = null;
+      zombie.pursuitTargetId = null;
+      zombie.vx = 0;
+      zombie.vy = 0;
+      return;
+    }
+
+    const dx = target.x - zombie.x;
+    const dy = target.y - zombie.y;
+    const distance = Math.hypot(dx, dy);
+    const attackRange = (zombie.size + target.size) / 2 + world.cell * 0.1;
+    if (distance > attackRange) {
+      const suggestedWaypoint = zombiePursuitPoint(zombie, target);
+      let waypoint = suggestedWaypoint;
+      if (suggestedWaypoint === target) {
+        zombie.pursuitWaypoint = null;
+        zombie.pursuitTargetId = target.id;
+      } else {
+        const arrivalDistance = Math.max(2, world.cell * 0.1);
+        const currentWaypoint = zombie.pursuitWaypoint;
+        const sameDetour = zombie.pursuitTargetId === target.id
+          && currentWaypoint?.obstacleId === suggestedWaypoint.obstacleId
+          && Math.hypot(currentWaypoint.x - zombie.x, currentWaypoint.y - zombie.y) >= arrivalDistance;
+        if (sameDetour) waypoint = currentWaypoint;
+        else {
+          zombie.pursuitWaypoint = { ...suggestedWaypoint };
+          zombie.pursuitTargetId = target.id;
+          waypoint = zombie.pursuitWaypoint;
+        }
+      }
+      const direction = Math.atan2(waypoint.y - zombie.y, waypoint.x - zombie.x);
+      zombie.angle = direction;
+      const speed = world.cell * ITEM_RULES.zombieSpeedCellsPerSecond * match.config.speedMultiplier;
+      zombie.vx = Math.cos(direction) * speed;
+      zombie.vy = Math.sin(direction) * speed;
+    } else {
+      zombie.pursuitWaypoint = null;
+      zombie.pursuitTargetId = target.id;
+      zombie.angle = distance > 1e-5 ? Math.atan2(dy, dx) : zombie.angle;
+      zombie.vx = 0;
+      zombie.vy = 0;
+      if (!zombie.zombieAttackTimers.has(target.id)) {
+        applyDamage(target, ITEM_RULES.zombieDamage, 'zombie', true, zombie.id);
+        zombie.zombieAttackTimers.set(target.id, ITEM_RULES.zombieAttackInterval);
+      }
+    }
+  }
+
   function updateRadiationDamage(fighter, dt) {
     const activePitIds = new Set();
     for (const pit of match.radiationPits) {
@@ -2109,7 +2595,15 @@
       if (fighter.eliminated) return;
       fighter.previousX = fighter.x;
       fighter.previousY = fighter.y;
-      const movementScale = isInRadiationSlowZone(fighter) ? 0.5 : 1;
+      if (fighter.damageNumber) {
+        fighter.damageNumber.remaining = Math.max(0, fighter.damageNumber.remaining - dt);
+        if (fighter.damageNumber.remaining <= 0) fighter.damageNumber = null;
+      }
+      if (fighter.isZombie) updateZombieAI(fighter, dt);
+      const adrenalineScale = fighter.adrenalineRemaining > 0 ? ITEM_RULES.adrenalineSpeedMultiplier : 1;
+      const slowScale = fighter.slowRemaining > 0 ? fighter.slowFactor : 1;
+      const radiationScale = isInRadiationSlowZone(fighter) ? 0.5 : 1;
+      const movementScale = adrenalineScale * slowScale * radiationScale;
       fighter.x += fighter.vx * dt * movementScale;
       fighter.y += fighter.vy * dt * movementScale;
       const friction = MAP_DEFINITIONS[match.config.mapType].friction;
@@ -2121,6 +2615,12 @@
       resolveObstacleCollisions(fighter, true);
       updateRadiationDamage(fighter, dt);
       if (fighter.eliminated) return;
+      fighter.adrenalineRemaining = Math.max(0, fighter.adrenalineRemaining - dt);
+      fighter.slowRemaining = Math.max(0, fighter.slowRemaining - dt);
+      if (fighter.slowRemaining <= 1e-6) {
+        fighter.slowRemaining = 0;
+        fighter.slowFactor = 1;
+      }
 
       if (fighter.faceMood !== 'idle' && now >= fighter.moodUntil) fighter.faceMood = 'idle';
       fighter.blinkIn -= dt;
@@ -2488,6 +2988,57 @@
     ctx.fill();
   }
 
+  function drawZombieFace(size) {
+    const eyeY = -size * 0.12;
+    const eyeDX = size * 0.18;
+    const eyeWidth = size * 0.22;
+    const eyeHeight = size * 0.19;
+
+    [-eyeDX, eyeDX].forEach((eyeX, index) => {
+      ctx.fillStyle = '#310e1a';
+      ctx.beginPath();
+      ctx.moveTo(eyeX - eyeWidth * 0.56, eyeY + eyeHeight * 0.16);
+      ctx.quadraticCurveTo(eyeX, eyeY - eyeHeight * 0.72, eyeX + eyeWidth * 0.56, eyeY - eyeHeight * 0.06);
+      ctx.quadraticCurveTo(eyeX + eyeWidth * 0.05, eyeY + eyeHeight * 0.68, eyeX - eyeWidth * 0.56, eyeY + eyeHeight * 0.16);
+      ctx.closePath();
+      ctx.fill();
+      ctx.shadowColor = '#ff1738';
+      ctx.shadowBlur = Math.max(3, size * 0.13);
+      ctx.fillStyle = index ? '#ff273e' : '#ff1738';
+      ctx.beginPath();
+      ctx.ellipse(eyeX, eyeY, eyeWidth * 0.33, eyeHeight * 0.39, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#260914';
+      ctx.beginPath();
+      ctx.ellipse(eyeX, eyeY, Math.max(0.8, size * 0.027), eyeHeight * 0.33, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#35111e';
+      ctx.lineWidth = Math.max(1.1, size * 0.055);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(eyeX - eyeWidth * 0.62, eyeY - eyeHeight * 0.48 + index * size * 0.035);
+      ctx.lineTo(eyeX + eyeWidth * 0.48, eyeY - eyeHeight * 0.22 - index * size * 0.035);
+      ctx.stroke();
+    });
+
+    ctx.fillStyle = '#2b111a';
+    ctx.beginPath();
+    ctx.ellipse(0, size * 0.2, size * 0.145, size * 0.085, -0.08, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#f4d9d7';
+    ctx.beginPath();
+    ctx.moveTo(-size * 0.1, size * 0.15);
+    ctx.lineTo(-size * 0.035, size * 0.15);
+    ctx.lineTo(-size * 0.065, size * 0.23);
+    ctx.closePath();
+    ctx.moveTo(size * 0.035, size * 0.15);
+    ctx.lineTo(size * 0.1, size * 0.15);
+    ctx.lineTo(size * 0.067, size * 0.23);
+    ctx.closePath();
+    ctx.fill();
+  }
+
   function drawBumpedFace(size) {
     ctx.strokeStyle = '#28344c';
     ctx.lineWidth = Math.max(1.5, size * 0.06);
@@ -2640,6 +3191,82 @@
     }
   }
 
+  function drawDamageNumber(fighter, size) {
+    const indicator = fighter.damageNumber;
+    if (!indicator || indicator.remaining <= 0) return;
+    const progress = 1 - indicator.remaining / indicator.maxRemaining;
+    const alpha = Math.max(0, Math.min(1, indicator.remaining / (indicator.maxRemaining * 0.42)));
+    const rise = size * 0.42 * progress;
+    const label = `−${formatHealthAmount(indicator.amount)}`;
+    const color = indicator.shielded && indicator.healthDamage <= 0 ? '#69d4ff' : '#ff6579';
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `900 ${Math.max(9, size * 0.24)}px system-ui`;
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = Math.max(2, size * 0.075);
+    ctx.strokeStyle = 'rgba(9, 15, 28, 0.92)';
+    ctx.strokeText(label, 0, -size * 0.76 - rise);
+    ctx.fillStyle = color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = Math.max(3, size * 0.12);
+    ctx.fillText(label, 0, -size * 0.76 - rise);
+    ctx.restore();
+  }
+
+  function drawHeldItemModels(fighter, time) {
+    const heldCount = fighter.heldItems.length;
+    const itemRadius = Math.max(6, Math.min(9.5, fighter.size * 0.2));
+    const half = fighter.size / 2;
+
+    const drawHeldModel = (type, angle) => {
+      const definition = ITEM_DEFINITIONS[type];
+      if (!definition) return;
+      const reach = half + itemRadius * 0.88;
+      const handX = reach - itemRadius * 0.55;
+
+      ctx.save();
+      ctx.rotate(angle);
+      ctx.lineCap = 'round';
+      ctx.lineWidth = Math.max(2, fighter.size * 0.085);
+      ctx.strokeStyle = fighter.dark;
+      ctx.beginPath();
+      ctx.moveTo(half * 0.72, 0);
+      ctx.lineTo(handX, 0);
+      ctx.stroke();
+      ctx.lineWidth = Math.max(1, fighter.size * 0.035);
+      ctx.strokeStyle = fighter.light;
+      ctx.beginPath();
+      ctx.moveTo(half * 0.74, -fighter.size * 0.012);
+      ctx.lineTo(handX, -fighter.size * 0.012);
+      ctx.stroke();
+      ctx.fillStyle = '#fff0ca';
+      ctx.strokeStyle = 'rgba(33, 45, 64, 0.86)';
+      ctx.lineWidth = Math.max(0.8, fighter.size * 0.025);
+      ctx.beginPath();
+      ctx.arc(handX, 0, Math.max(1.6, itemRadius * 0.23), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.save();
+      ctx.rotate(angle);
+      ctx.translate(reach, 0);
+      drawItemModel(type, definition.color, itemRadius, time);
+      ctx.restore();
+    };
+
+    fighter.heldItems.forEach((item, index) => {
+      const spread = (index - (heldCount - 1) / 2) * 0.68;
+      drawHeldModel(item.type, fighter.angle + spread);
+    });
+    if (fighter.shield && fighter.shield.health > 0) {
+      drawHeldModel('shield', fighter.angle + Math.PI * 0.8);
+    }
+  }
+
   function drawFighter(fighter, time) {
     const size = fighter.size;
     const half = size / 2;
@@ -2684,20 +3311,13 @@
     ctx.fill();
     ctx.globalAlpha = 1;
 
-    if (mood === 'wall' || mood === 'hurt') drawSurprisedFace(size, lookX, lookY);
+    if (fighter.isZombie) drawZombieFace(size);
+    else if (mood === 'wall' || mood === 'hurt') drawSurprisedFace(size, lookX, lookY);
     else if (mood === 'bump' || mood === 'obstacle') drawBumpedFace(size);
     else if (mood === 'dizzy') drawDizzyFace(size, time);
     else drawPersonalityFace(fighter, size, lookX, lookY);
 
-    if (mood === 'hurt' && fighter.lastDamage > 0) {
-      ctx.fillStyle = '#ff5b70';
-      ctx.font = `900 ${Math.max(7, size * 0.18)}px system-ui`;
-      ctx.fillText(`-${fighter.lastDamage}`, half * 0.68, -half * 0.57);
-    } else if (mood === 'hurt') {
-      ctx.fillStyle = ITEM_DEFINITIONS.shield.color;
-      ctx.font = `900 ${Math.max(8, size * 0.2)}px system-ui`;
-      ctx.fillText('✧', half * 0.68, -half * 0.57);
-    } else if (mood === 'wall' || mood === 'obstacle') {
+    if (mood === 'wall' || mood === 'obstacle') {
       ctx.fillStyle = 'rgba(255,255,255,.92)';
       ctx.font = `800 ${Math.max(7, size * 0.2)}px system-ui`;
       ctx.fillText(mood === 'wall' ? '!' : '✦', half * 0.68, -half * 0.57);
@@ -2707,6 +3327,8 @@
       ctx.fillText('✦', half * 0.7, -half * 0.55);
     }
     drawFighterHealthBar(fighter, size);
+    drawHeldItemModels(fighter, time);
+    drawDamageNumber(fighter, size);
     ctx.restore();
   }
 
@@ -2920,6 +3542,11 @@
         maxHealth: fighter.maxHealth,
         shield: fighter.shield ? { ...fighter.shield } : null,
         eliminated: fighter.eliminated,
+        isZombie: fighter.isZombie,
+        summonerId: fighter.summonerId,
+        adrenalineRemaining: Number(fighter.adrenalineRemaining.toFixed(3)),
+        slowRemaining: Number(fighter.slowRemaining.toFixed(3)),
+        damageNumber: fighter.damageNumber ? { ...fighter.damageNumber } : null,
         heldItems: fighter.heldItems.map((item) => item.type),
       })),
       obstacles: match.obstacles.map((obstacle) => ({ ...obstacle })),
