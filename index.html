@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#080b14" />
+    <meta
+      name="description"
+      content="方块竞技场：四种颜色的小方块在封闭网格竞技场中自由对战。"
+    />
+    <title>方块竞技场 · Block Arena</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="game.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="./" aria-label="方块竞技场首页">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span class="brand-copy">
+            <strong>方块竞技场</strong>
+            <span>BLOCK BOUNCE / PLAYGROUND</span>
+          </span>
+        </a>
+        <div class="topbar-meta">
+          <span class="online-indicator"><i></i> 原型试玩</span>
+          <span class="meta-divider" aria-hidden="true"></span>
+          <span class="meta-secondary">纯网页 · 无需安装</span>
+        </div>
+      </header>
+
+      <main>
+        <section class="intro" aria-labelledby="page-title">
+          <div class="intro-copy">
+            <div class="eyebrow"><span>ARENA 01</span><b>·</b> FREE FOR ALL</div>
+            <h1 id="page-title">小方块，<em>准备开战。</em></h1>
+            <p>在封闭网格竞技场里移动、碰撞、躲避弹丸。先把基础对战跑起来，更多玩法之后再加。</p>
+          </div>
+          <div class="mode-stamp" aria-label="自由混战模式">
+            <span class="stamp-stars" aria-hidden="true">✳ ✳ ✳</span>
+            <strong>FREE<br />FOR ALL</strong>
+            <span>4 个颜色 · 即时碰撞</span>
+          </div>
+        </section>
+
+        <div class="game-layout">
+          <section class="arena-card panel" aria-label="方块竞技场">
+            <div class="arena-heading">
+              <div>
+                <span class="section-kicker">LIVE MATCH</span>
+                <h2>自由混战 <span>·</span> 第 01 局</h2>
+              </div>
+              <div class="match-state" id="matchState" aria-live="polite">
+                <i></i><span>进行中</span>
+              </div>
+            </div>
+
+            <div class="health-list" id="healthList" aria-label="各颜色方块生命值"></div>
+
+            <div class="arena-shell">
+              <canvas id="gameCanvas" aria-label="网格竞技场。使用方向键或 WASD 移动蓝色方块。">
+                你的浏览器不支持 Canvas，请使用较新的浏览器游玩。
+              </canvas>
+              <div class="arena-overlay" id="arenaOverlay" hidden>
+                <div class="overlay-card">
+                  <span class="overlay-spark" aria-hidden="true">✦</span>
+                  <strong id="overlayTitle">已暂停</strong>
+                  <span id="overlayMessage">按继续回到竞技场。</span>
+                </div>
+              </div>
+              <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+            </div>
+
+            <div class="arena-footer">
+              <div class="match-stats">
+                <span class="stat-chip"><i class="stat-dot"></i> 淘汰 <strong id="eliminationCount">0</strong></span>
+                <span class="stat-chip">场地 <strong id="arenaSize">—</strong></span>
+              </div>
+              <div class="arena-actions">
+                <button class="action-button secondary" id="pauseButton" type="button">
+                  <svg class="pause-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M6 4.5h2.8v11H6zM11.2 4.5H14v11h-2.8z" /></svg>
+                  <span>暂停</span>
+                </button>
+                <button class="action-button primary" id="restartButton" type="button" aria-label="重新开局">
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16.6 6.9A7 7 0 0 0 4.4 5.5L2.8 7.1M2.8 7.1V3.8M2.8 7.1h3.4M3.4 13.1a7 7 0 0 0 12.2 1.4l1.6-1.6m0 0v3.3m0-3.3h-3.4" /></svg>
+                  <span>重新开局</span>
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <aside class="side-column" aria-label="玩家与操作说明">
+            <section class="info-card panel player-card" aria-labelledby="player-title">
+              <div class="panel-heading">
+                <h2 id="player-title">你的方块</h2>
+                <span class="you-badge">YOU</span>
+              </div>
+              <div class="player-summary">
+                <span class="player-swatch" aria-hidden="true"><i></i></span>
+                <div><strong>蓝色玩家</strong><span>移动 · 碰撞 · 生存</span></div>
+                <span class="player-alive" id="playerAlive">存活</span>
+              </div>
+              <div class="player-hint"><span>目标</span><strong>躲开其他方块和弹丸，尽量留在场上。</strong></div>
+            </section>
+
+            <section class="info-card panel controls-card" aria-labelledby="controls-title">
+              <div class="panel-heading">
+                <h2 id="controls-title">移动操作</h2>
+                <span class="control-tag">简单上手</span>
+              </div>
+              <div class="key-guide" aria-label="键盘操作">
+                <div class="key-line"><span><kbd>W</kbd><kbd>↑</kbd></span><span>向上</span></div>
+                <div class="key-line"><span><kbd>A</kbd><kbd>←</kbd></span><span>向左</span></div>
+                <div class="key-line"><span><kbd>S</kbd><kbd>↓</kbd></span><span>向下</span></div>
+                <div class="key-line"><span><kbd>D</kbd><kbd>→</kbd></span><span>向右</span></div>
+              </div>
+              <p class="control-note">电脑按方向键或 WASD；手机使用方向键，也可以在场地上滑动。</p>
+              <div class="mobile-controls" aria-label="触屏移动方向">
+                <button type="button" data-direction="up" aria-label="向上移动"><span>↑</span></button>
+                <button type="button" data-direction="left" aria-label="向左移动"><span>←</span></button>
+                <span class="dpad-center" aria-hidden="true">✳</span>
+                <button type="button" data-direction="right" aria-label="向右移动"><span>→</span></button>
+                <button type="button" data-direction="down" aria-label="向下移动"><span>↓</span></button>
+              </div>
+            </section>
+
+            <section class="tip-card" aria-label="碰撞提示">
+              <span class="tip-symbol" aria-hidden="true">!</span>
+              <p><strong>碰撞已启用</strong><span>方块不能穿过竞技场边界或彼此重叠；弹丸命中会扣除生命。</span></p>
+            </section>
+          </aside>
+        </div>
+      </main>
+
+      <footer class="page-footer">
+        <span>小小方块，热闹开场 <i>✳</i></span>
+        <span>GitHub Pages ready <b>·</b> 静态网页原型</span>
+      </footer>
+    </div>
+  </body>
+</html>
