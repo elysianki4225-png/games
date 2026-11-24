@@ -2640,6 +2640,57 @@
     }
   }
 
+  function drawHeldItemModels(fighter, time) {
+    const heldCount = fighter.heldItems.length;
+    const itemRadius = Math.max(6, Math.min(9.5, fighter.size * 0.2));
+    const half = fighter.size / 2;
+
+    const drawHeldModel = (type, angle) => {
+      const definition = ITEM_DEFINITIONS[type];
+      if (!definition) return;
+      const reach = half + itemRadius * 0.88;
+      const handX = reach - itemRadius * 0.55;
+
+      ctx.save();
+      ctx.rotate(angle);
+      ctx.lineCap = 'round';
+      ctx.lineWidth = Math.max(2, fighter.size * 0.085);
+      ctx.strokeStyle = fighter.dark;
+      ctx.beginPath();
+      ctx.moveTo(half * 0.72, 0);
+      ctx.lineTo(handX, 0);
+      ctx.stroke();
+      ctx.lineWidth = Math.max(1, fighter.size * 0.035);
+      ctx.strokeStyle = fighter.light;
+      ctx.beginPath();
+      ctx.moveTo(half * 0.74, -fighter.size * 0.012);
+      ctx.lineTo(handX, -fighter.size * 0.012);
+      ctx.stroke();
+      ctx.fillStyle = '#fff0ca';
+      ctx.strokeStyle = 'rgba(33, 45, 64, 0.86)';
+      ctx.lineWidth = Math.max(0.8, fighter.size * 0.025);
+      ctx.beginPath();
+      ctx.arc(handX, 0, Math.max(1.6, itemRadius * 0.23), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.save();
+      ctx.rotate(angle);
+      ctx.translate(reach, 0);
+      drawItemModel(type, definition.color, itemRadius, time);
+      ctx.restore();
+    };
+
+    fighter.heldItems.forEach((item, index) => {
+      const spread = (index - (heldCount - 1) / 2) * 0.68;
+      drawHeldModel(item.type, fighter.angle + spread);
+    });
+    if (fighter.shield && fighter.shield.health > 0) {
+      drawHeldModel('shield', fighter.angle + Math.PI * 0.8);
+    }
+  }
+
   function drawFighter(fighter, time) {
     const size = fighter.size;
     const half = size / 2;
@@ -2707,6 +2758,7 @@
       ctx.fillText('✦', half * 0.7, -half * 0.55);
     }
     drawFighterHealthBar(fighter, size);
+    drawHeldItemModels(fighter, time);
     ctx.restore();
   }
 
