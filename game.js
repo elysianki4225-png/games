@@ -116,9 +116,15 @@
     laserAimCellsPerSecond: 30,
     zombieCount: 3,
     zombieHealth: 50,
-    zombieDamage: 5,
-    zombieAttackInterval: 0.85,
-    zombieSpeedCellsPerSecond: 2.8,
+    zombieHealthDrain: 1,
+    zombieHealthDrainInterval: 1,
+    zombieContactDamage: 5,
+    zombieContactInterval: 1,
+    priestHealth: 50,
+    priestAttackCount: 10,
+    priestAttackInterval: 2,
+    priestDamage: 10,
+    lightningEffectDuration: 0.34,
     adrenalineDuration: 5,
     adrenalineSpeedMultiplier: 1.75,
     adrenalineDamageReduction: 0.5,
@@ -151,6 +157,7 @@
     shield: Object.freeze({ name: '盾牌', shortName: '盾', icon: '⬟', color: '#69d4ff', group: 'passive' }),
     laser: Object.freeze({ name: '激光枪', shortName: '激光', icon: '⚡', color: '#bd8bff', group: 'ranged' }),
     wand: Object.freeze({ name: '召唤法杖', shortName: '法杖', icon: '✦', color: '#a789ff', group: 'ranged' }),
+    holyStaff: Object.freeze({ name: '神圣法杖', shortName: '圣杖', icon: '✛', color: '#f4d477', group: 'ranged' }),
     adrenaline: Object.freeze({ name: '肾上腺素', shortName: '肾上腺素', icon: '⚡', color: '#ff745e', group: 'ranged' }),
     iceShooter: Object.freeze({ name: '寒冰射手', shortName: '寒冰', icon: '❄', color: '#7de5ff', group: 'ranged' }),
   });
@@ -302,8 +309,6 @@
       fighter.x *= scaleX;
       fighter.y *= scaleY;
       fighter.size = blockSizeForCount(match.config.blockCount);
-      fighter.pursuitWaypoint = null;
-      fighter.pursuitTargetId = null;
       keepInside(fighter, false);
     });
     rebuildObstaclesForResize();
@@ -482,10 +487,12 @@
       heldItems: [],
       shield: null,
       isZombie: false,
+      isPriest: false,
       summonerId: null,
-      zombieAttackTimers: new Map(),
-      pursuitWaypoint: null,
-      pursuitTargetId: null,
+      zombieHealthDrainRemaining: 0,
+      zombieContactCooldown: 0,
+      priestAttacksRemaining: 0,
+      priestAttackCooldown: 0,
       adrenalineRemaining: 0,
       slowRemaining: 0,
       slowFactor: 1,
@@ -511,26 +518,51 @@
       hue,
     };
     const zombie = createFighter(appearance, match.fighters.length, match.config.blockCount, match.fighters);
-    const angle = summoner.angle + index * Math.PI * 2 / ITEM_RULES.zombieCount;
+    const spawnAngle = summoner.angle + index * Math.PI * 2 / ITEM_RULES.zombieCount;
     const bounds = nearestWallBounds(zombie);
     const distance = summoner.size * 0.9;
     zombie.id = `zombie-${match.nextZombieId++}`;
     zombie.name = `${summoner.name} 僵尸${index + 1}`;
     zombie.isZombie = true;
     zombie.summonerId = summoner.id;
-    zombie.idle = '红眼追猎';
+    zombie.idle = '随机游荡';
     zombie.maxHealth = ITEM_RULES.zombieHealth;
     zombie.health = ITEM_RULES.zombieHealth;
-    zombie.heldItems = [];
-    zombie.shield = null;
-    zombie.x = Math.max(bounds.minX, Math.min(bounds.maxX, summoner.x + Math.cos(angle) * distance));
-    zombie.y = Math.max(bounds.minY, Math.min(bounds.maxY, summoner.y + Math.sin(angle) * distance));
+    zombie.zombieHealthDrainRemaining = ITEM_RULES.zombieHealthDrainInterval;
+    zombie.x = Math.max(bounds.minX, Math.min(bounds.maxX, summoner.x + Math.cos(spawnAngle) * distance));
+    zombie.y = Math.max(bounds.minY, Math.min(bounds.maxY, summoner.y + Math.sin(spawnAngle) * distance));
     zombie.previousX = zombie.x;
     zombie.previousY = zombie.y;
-    zombie.vx = Math.cos(angle) * world.cell * ITEM_RULES.zombieSpeedCellsPerSecond * match.config.speedMultiplier;
-    zombie.vy = Math.sin(angle) * world.cell * ITEM_RULES.zombieSpeedCellsPerSecond * match.config.speedMultiplier;
-    zombie.angle = angle;
     return zombie;
+  }
+
+  function createPriest(summoner) {
+    const hue = summoner.hue;
+    const appearance = {
+      color: hslColor(hue, 54, 88),
+      light: hslColor(hue, 48, 96),
+      dark: hslColor(hue, 48, 73),
+      glow: hslColor(hue, 75, 86, 0.4),
+      hue,
+    };
+    const priest = createFighter(appearance, match.fighters.length, match.config.blockCount, match.fighters);
+    const spawnAngle = summoner.angle + Math.PI / 2;
+    const bounds = nearestWallBounds(priest);
+    const distance = summoner.size * 0.95;
+    priest.id = `priest-${match.nextPriestId++}`;
+    priest.name = `${summoner.name} 神父`;
+    priest.isPriest = true;
+    priest.summonerId = summoner.id;
+    priest.idle = '圣光守护';
+    priest.maxHealth = ITEM_RULES.priestHealth;
+    priest.health = ITEM_RULES.priestHealth;
+    priest.priestAttacksRemaining = ITEM_RULES.priestAttackCount;
+    priest.priestAttackCooldown = ITEM_RULES.priestAttackInterval;
+    priest.x = Math.max(bounds.minX, Math.min(bounds.maxX, summoner.x + Math.cos(spawnAngle) * distance));
+    priest.y = Math.max(bounds.minY, Math.min(bounds.maxY, summoner.y + Math.sin(spawnAngle) * distance));
+    priest.previousX = priest.x;
+    priest.previousY = priest.y;
+    return priest;
   }
 
   function createRosterChip(fighter) {
@@ -539,6 +571,7 @@
     chip.dataset.character = fighter.id;
     chip.style.setProperty('--character-color', fighter.color);
     chip.classList.toggle('is-zombie', Boolean(fighter.isZombie));
+    chip.classList.toggle('is-priest', Boolean(fighter.isPriest));
     chip.setAttribute('aria-label', `${fighter.name}，${fighter.idle}，${fighter.health} HP`);
 
     const swatch = document.createElement('span');
@@ -632,6 +665,7 @@
       simulationTime: 0,
       nextItemId: 1,
       nextZombieId: 1,
+      nextPriestId: 1,
       nextIceShooterId: 1,
       itemSpawnCooldown: 0,
       itemUseReadyAt: 0,
@@ -720,23 +754,28 @@
         : '护盾 —';
       chip.classList.toggle('has-shield', Boolean(fighter.shield));
       chip.classList.toggle('is-zombie', fighter.isZombie);
+      chip.classList.toggle('is-priest', fighter.isPriest);
       chip.classList.toggle('is-slowed', fighter.slowRemaining > 0);
       chip.classList.toggle('has-adrenaline', fighter.adrenalineRemaining > 0);
       chip.classList.toggle('is-reacting', fighter.faceMood !== 'idle' && now < fighter.moodUntil);
       chip.classList.toggle('is-critical', !fighter.eliminated && ratio <= 0.25);
       chip.classList.toggle('is-eliminated', fighter.eliminated);
-      const roleLabel = fighter.isZombie ? `僵尸，召唤者 ${fighter.summonerId || '未知'}` : '方块';
+      const roleLabel = fighter.isZombie
+        ? `僵尸，召唤者 ${fighter.summonerId || '未知'}`
+        : (fighter.isPriest ? `神父，召唤者 ${fighter.summonerId || '未知'}` : '方块');
       const effectLabels = [
         fighter.adrenalineRemaining > 0 ? `肾上腺素 ${fighter.adrenalineRemaining.toFixed(1)} 秒` : '',
         fighter.slowRemaining > 0 ? `减速 ${fighter.slowRemaining.toFixed(1)} 秒` : '',
+        fighter.isZombie ? `每秒流失 ${ITEM_RULES.zombieHealthDrain} HP，碰撞 ${ITEM_RULES.zombieContactDamage} HP` : '',
+        fighter.isPriest ? `神雷剩余 ${fighter.priestAttacksRemaining} 次` : '',
       ].filter(Boolean).join('，');
       chip.setAttribute('aria-label', `${fighter.name}，${roleLabel}，${label}，${Math.ceil(fighter.health)} / ${fighter.maxHealth} HP，手持道具 ${heldItemsLabel}，${fighter.shield ? `护盾 ${shieldHealth} / ${fighter.shield.maxHealth} HP` : '无护盾'}${effectLabels ? `，${effectLabels}` : ''}`);
     });
     const livingCount = match.fighters.filter((fighter) => !fighter.eliminated).length;
-    const livingPlayerCount = match.fighters.filter((fighter) => !fighter.eliminated && !fighter.isZombie).length;
+    const livingPlayerCount = match.fighters.filter((fighter) => !fighter.eliminated && !fighter.isZombie && !fighter.isPriest).length;
     aliveCount.textContent = String(livingCount);
     if (!match.paused && !match.ended && livingPlayerCount === 1) {
-      const survivor = match.fighters.find((fighter) => !fighter.eliminated && !fighter.isZombie);
+      const survivor = match.fighters.find((fighter) => !fighter.eliminated && !fighter.isZombie && !fighter.isPriest);
       matchState.querySelector('span').textContent = survivor ? `${survivor.name} · 最后一位` : '对局结束';
     } else if (!match.paused && !match.ended) {
       matchState.querySelector('span').textContent = MAP_DEFINITIONS[match.config.mapType].status;
@@ -922,7 +961,8 @@
     const attacker = attackerId ? match.fighters.find((item) => item.id === attackerId) : null;
     if (attacker && areSummonAllies(attacker, fighter)) return 0;
     const baseDamage = Math.max(1, Math.round(amount));
-    const damage = fighter.adrenalineRemaining > 0
+    const ignoresMitigation = source === 'zombieDecay';
+    const damage = !ignoresMitigation && fighter.adrenalineRemaining > 0
       ? baseDamage * (1 - ITEM_RULES.adrenalineDamageReduction)
       : baseDamage;
     if (attacker) recordHostility(fighter, attacker, Math.max(1, damage / 5));
@@ -930,7 +970,7 @@
     let healthDamage = damage;
     let shieldDamage = 0;
     let shieldBroken = false;
-    if (fighter.shield && fighter.shield.health > 0) {
+    if (!ignoresMitigation && fighter.shield && fighter.shield.health > 0) {
       shieldDamage = Math.min(fighter.shield.health, healthDamage);
       fighter.shield.health = Math.max(0, fighter.shield.health - shieldDamage);
       healthDamage -= shieldDamage;
@@ -962,7 +1002,7 @@
     const sourceLabel = ({
       radiation: '辐射坑', cactus: '仙人掌', knife: '刀', pistol: '手枪',
       shotgun: '霰弹枪', sniper: '狙击枪', flamethrower: '喷火器', c4: 'C4 爆炸', laser: '激光',
-      zombie: '僵尸', iceShooter: '寒冰射手',
+      zombie: '僵尸', zombieDecay: '僵尸生命流失', iceShooter: '寒冰射手', holyLightning: '神圣雷击',
     })[source] || '对手';
     if (announce && shieldDamage > 0) {
       const healthText = healthDamage > 0 ? `，生命 -${formatHealthAmount(healthDamage)} HP` : '，生命未受伤';
@@ -988,14 +1028,18 @@
     fighter.adrenalineRemaining = 0;
     fighter.slowRemaining = 0;
     fighter.slowFactor = 1;
-    fighter.zombieAttackTimers?.clear();
-    fighter.pursuitWaypoint = null;
-    fighter.pursuitTargetId = null;
+    fighter.zombieHealthDrainRemaining = 0;
+    fighter.zombieContactCooldown = 0;
+    fighter.priestAttackCooldown = 0;
+    fighter.priestAttacksRemaining = 0;
     dropHeldItems(fighter);
     fighter.faceMood = 'idle';
     match.eliminations += 1;
     addBurst(fighter.x, fighter.y, [fighter.color, '#ffffff', '#ff7184'], 18);
-    addEvent(`${fighter.name} 血量耗尽，淘汰出局`, fighter.color);
+    const eliminationText = source === 'priestFinished'
+      ? `${fighter.name} 完成十次雷击后消散`
+      : `${fighter.name} 血量耗尽，淘汰出局`;
+    addEvent(eliminationText, fighter.color);
     if (!fighter.isZombie) {
       match.fighters.filter((item) => item.isZombie && item.summonerId === fighter.id && !item.eliminated)
         .forEach((zombie) => {
@@ -1006,9 +1050,8 @@
           zombie.adrenalineRemaining = 0;
           zombie.slowRemaining = 0;
           zombie.slowFactor = 1;
-          zombie.zombieAttackTimers?.clear();
-          zombie.pursuitWaypoint = null;
-          zombie.pursuitTargetId = null;
+          zombie.zombieHealthDrainRemaining = 0;
+          zombie.zombieContactCooldown = 0;
           zombie.faceMood = 'idle';
           dropHeldItems(zombie);
           match.eliminations += 1;
@@ -1110,10 +1153,20 @@
     }
   }
 
+  function applyZombieContactDamage(zombie, target) {
+    if (!zombie?.isZombie || zombie.eliminated || !target || target.eliminated
+      || zombie.zombieContactCooldown > 0 || areSummonAllies(zombie, target)) return false;
+    applyDamage(target, ITEM_RULES.zombieContactDamage, 'zombie', true, zombie.id);
+    zombie.zombieContactCooldown = ITEM_RULES.zombieContactInterval;
+    return true;
+  }
+
   function registerBlockCollision(first, second, pairKey) {
     match.pairCooldowns.set(pairKey, 0.28);
     recordHostility(first, second, 1);
     recordHostility(second, first, 1);
+    applyZombieContactDamage(first, second);
+    applyZombieContactDamage(second, first);
     match.collisions += 1;
     match.blockHits += 1;
     setMood(first, 'bump', 760);
@@ -1206,6 +1259,17 @@
         id: fighter.id,
         summoner: fighter.summonerId,
         health: fighter.health,
+        healthDrainRemaining: Number(fighter.zombieHealthDrainRemaining.toFixed(3)),
+        contactCooldown: Number(fighter.zombieContactCooldown.toFixed(3)),
+        heldItems: fighter.heldItems.map((item) => item.type),
+        color: fighter.color,
+      })),
+      priests: match.fighters.filter((fighter) => fighter.isPriest && !fighter.eliminated).map((fighter) => ({
+        id: fighter.id,
+        summoner: fighter.summonerId,
+        health: fighter.health,
+        attacksRemaining: fighter.priestAttacksRemaining,
+        attackCooldown: Number(fighter.priestAttackCooldown.toFixed(3)),
         color: fighter.color,
       })),
       iceShooters: match.iceShooters.map((iceShooter) => ({
@@ -1266,7 +1330,7 @@
     let changed = false;
     const remaining = [];
     match.items.forEach((pickup) => {
-      const collector = match.fighters.find((fighter) => !fighter.eliminated && !fighter.isZombie
+      const collector = match.fighters.find((fighter) => !fighter.eliminated && !fighter.isPriest
         && Math.hypot(fighter.x - pickup.x, fighter.y - pickup.y) <= fighter.size / 2 + pickup.radius);
       if (!collector) {
         remaining.push(pickup);
@@ -1317,7 +1381,7 @@
     return first.id === second.id
       || first.summonerId === second.id
       || second.summonerId === first.id
-      || (first.isZombie && second.isZombie && first.summonerId === second.summonerId);
+      || Boolean(first.summonerId && first.summonerId === second.summonerId);
   }
 
   function pickHostileTarget(shooter) {
@@ -1335,6 +1399,25 @@
       return scored[0].fighter;
     }
     scored.sort((first, second) => first.distance - second.distance);
+    return scored[0].fighter;
+  }
+
+  function pickMostThreateningTarget(summoner, priest) {
+    if (!match || !priest || priest.eliminated) return null;
+    const candidates = match.fighters.filter((fighter) => !fighter.eliminated && !areSummonAllies(priest, fighter));
+    if (!candidates.length) return null;
+    const reference = summoner || priest;
+    const scored = candidates.map((fighter) => ({
+      fighter,
+      hostility: hostilityToward(summoner, fighter),
+      distance: Math.hypot(fighter.x - reference.x, fighter.y - reference.y),
+    }));
+    const maxHostility = Math.max(...scored.map((entry) => entry.hostility));
+    if (maxHostility > 0.04) {
+      scored.sort((first, second) => second.hostility - first.hostility || first.distance - second.distance);
+    } else {
+      scored.sort((first, second) => first.distance - second.distance);
+    }
     return scored[0].fighter;
   }
 
@@ -1457,6 +1540,18 @@
     return true;
   }
 
+  function summonPriest(owner) {
+    if (!owner || owner.eliminated || owner.isZombie || owner.isPriest) return false;
+    const priest = createPriest(owner);
+    match.fighters.push(priest);
+    createRosterChip(priest);
+    syncHud();
+    addBurst(priest.x, priest.y, ['#fff7cf', priest.color, '#ffffff'], 14);
+    addEvent(`${owner.name} 召唤了 50 HP 神父方块`, ITEM_DEFINITIONS.holyStaff.color);
+    showToast(`${owner.name} 召来神父守护！`);
+    return true;
+  }
+
   function activateAdrenaline(owner) {
     if (!owner || owner.eliminated) return false;
     owner.adrenalineRemaining = ITEM_RULES.adrenalineDuration;
@@ -1540,6 +1635,8 @@
       }
     } else if (item.type === 'wand') {
       used = summonZombies(owner);
+    } else if (item.type === 'holyStaff') {
+      used = summonPriest(owner);
     } else if (item.type === 'adrenaline') {
       used = activateAdrenaline(owner);
     } else if (item.type === 'iceShooter') {
@@ -2160,6 +2257,39 @@
       ctx.fillStyle = '#ffffff';
       drawStar(0, -10, 2.2, 1, 4);
       ctx.restore();
+    } else if (type === 'holyStaff') {
+      ctx.save();
+      ctx.rotate(-0.42);
+      ctx.strokeStyle = '#8c7340';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(0, 12);
+      ctx.lineTo(0, -8);
+      ctx.stroke();
+      ctx.strokeStyle = '#fff1b4';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(-1, 8);
+      ctx.lineTo(-1, -7);
+      ctx.stroke();
+      ctx.strokeStyle = '#fff8d8';
+      ctx.lineWidth = 2.8;
+      ctx.beginPath();
+      ctx.moveTo(0, -14);
+      ctx.lineTo(0, -5);
+      ctx.moveTo(-4, -10);
+      ctx.lineTo(4, -10);
+      ctx.stroke();
+      ctx.fillStyle = '#fff4bb';
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 8;
+      ctx.beginPath();
+      ctx.arc(0, -10, 5 + Math.sin(time * 0.02) * 0.35, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#fffdfa';
+      drawStar(0, -10, 2.5, 1, 4);
+      ctx.restore();
     } else if (type === 'adrenaline') {
       ctx.save();
       ctx.rotate(-0.25);
@@ -2389,6 +2519,44 @@
     });
 
     match.itemEffects.forEach((effect) => {
+      if (effect.type === 'lightning') {
+        const dx = effect.x2 - effect.x1;
+        const dy = effect.y2 - effect.y1;
+        const length = Math.hypot(dx, dy);
+        const offset = Math.min(world.cell * 0.18, length * 0.045);
+        const alpha = Math.max(0, Math.min(1, effect.life / effect.maxLife));
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.shadowColor = '#fff09a';
+        ctx.shadowBlur = 18;
+        ctx.strokeStyle = '#ffd950';
+        ctx.lineWidth = Math.max(3, world.cell * 0.09);
+        ctx.beginPath();
+        for (let index = 0; index <= 8; index += 1) {
+          const amount = index / 8;
+          const jitter = index === 0 || index === 8
+            ? 0
+            : Math.sin(time * 0.08 + effect.seed + index * 17) * offset;
+          const x = effect.x1 + dx * amount + (-dy / Math.max(1, length)) * jitter;
+          const y = effect.y1 + dy * amount + (dx / Math.max(1, length)) * jitter;
+          if (index === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = Math.max(1.4, world.cell * 0.035);
+        ctx.stroke();
+        ctx.fillStyle = '#fff8c7';
+        ctx.beginPath();
+        ctx.arc(effect.x2, effect.y2, Math.max(4, world.cell * 0.13), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        return;
+      }
+
       const progress = 1 - effect.life / effect.maxLife;
       const radius = effect.radius * Math.max(0.15, progress);
       ctx.save();
@@ -2419,139 +2587,6 @@
     return match.radiationPits.some((pit) => isInsideRadiationPit(fighter, pit));
   }
 
-  function segmentAabbEntry(startX, startY, endX, endY, minX, minY, maxX, maxY) {
-    let entry = 0;
-    let exit = 1;
-    const axes = [
-      [startX, endX - startX, minX, maxX],
-      [startY, endY - startY, minY, maxY],
-    ];
-    for (const [origin, delta, minimum, maximum] of axes) {
-      if (Math.abs(delta) < 1e-9) {
-        if (origin <= minimum || origin >= maximum) return null;
-        continue;
-      }
-      let first = (minimum - origin) / delta;
-      let second = (maximum - origin) / delta;
-      if (first > second) [first, second] = [second, first];
-      entry = Math.max(entry, first);
-      exit = Math.min(exit, second);
-      if (entry >= exit) return null;
-    }
-    if (exit <= 1e-6 || entry >= 1 - 1e-6) return null;
-    return Math.max(0, entry);
-  }
-
-  function zombiePursuitPoint(zombie, target) {
-    const radius = zombie.size / 2;
-    const blockers = match.obstacles.filter((obstacle) => !obstacle.destroyed).map((obstacle) => ({
-      obstacle,
-      entry: segmentAabbEntry(
-        zombie.x, zombie.y, target.x, target.y,
-        obstacle.x - obstacle.width / 2 - radius,
-        obstacle.y - obstacle.height / 2 - radius,
-        obstacle.x + obstacle.width / 2 + radius,
-        obstacle.y + obstacle.height / 2 + radius,
-      ),
-    })).filter((entry) => entry.entry !== null).sort((first, second) => first.entry - second.entry);
-    if (!blockers.length) return target;
-
-    const blocker = blockers[0].obstacle;
-    const margin = Math.max(2, world.cell * 0.08);
-    const halfX = blocker.width / 2 + radius + margin;
-    const halfY = blocker.height / 2 + radius + margin;
-    const bounds = nearestWallBounds(zombie);
-    const corners = [
-      { x: blocker.x - halfX, y: blocker.y - halfY },
-      { x: blocker.x + halfX, y: blocker.y - halfY },
-      { x: blocker.x - halfX, y: blocker.y + halfY },
-      { x: blocker.x + halfX, y: blocker.y + halfY },
-    ].map((point) => ({
-      x: Math.max(bounds.minX, Math.min(bounds.maxX, point.x)),
-      y: Math.max(bounds.minY, Math.min(bounds.maxY, point.y)),
-      obstacleId: blocker.id,
-    }));
-
-    const reachable = corners.filter((point) => {
-      if (Math.hypot(point.x - zombie.x, point.y - zombie.y) < Math.max(2, world.cell * 0.1)) return false;
-      if (match.obstacles.some((obstacle) => !obstacle.destroyed
-        && obstacleOverlaps(point.x, point.y, zombie.size, obstacle, 1))) return false;
-      return !match.obstacles.some((obstacle) => !obstacle.destroyed
-        && !obstacleOverlaps(zombie.x, zombie.y, zombie.size, obstacle)
-        && segmentAabbEntry(
-          zombie.x, zombie.y, point.x, point.y,
-          obstacle.x - obstacle.width / 2 - radius,
-          obstacle.y - obstacle.height / 2 - radius,
-          obstacle.x + obstacle.width / 2 + radius,
-          obstacle.y + obstacle.height / 2 + radius,
-        ) !== null);
-    });
-    if (!reachable.length) return target;
-    reachable.sort((first, second) => (
-      Math.hypot(first.x - zombie.x, first.y - zombie.y) + Math.hypot(first.x - target.x, first.y - target.y)
-      - Math.hypot(second.x - zombie.x, second.y - zombie.y) - Math.hypot(second.x - target.x, second.y - target.y)
-    ));
-    return reachable[0];
-  }
-
-  function updateZombieAI(zombie, dt) {
-    if (!zombie?.isZombie || zombie.eliminated) return;
-    if (!(zombie.zombieAttackTimers instanceof Map)) zombie.zombieAttackTimers = new Map();
-    zombie.zombieAttackTimers.forEach((remaining, targetId) => {
-      if (remaining <= dt) zombie.zombieAttackTimers.delete(targetId);
-      else zombie.zombieAttackTimers.set(targetId, remaining - dt);
-    });
-
-    const target = pickHostileTarget(zombie);
-    if (!target) {
-      zombie.pursuitWaypoint = null;
-      zombie.pursuitTargetId = null;
-      zombie.vx = 0;
-      zombie.vy = 0;
-      return;
-    }
-
-    const dx = target.x - zombie.x;
-    const dy = target.y - zombie.y;
-    const distance = Math.hypot(dx, dy);
-    const attackRange = (zombie.size + target.size) / 2 + world.cell * 0.1;
-    if (distance > attackRange) {
-      const suggestedWaypoint = zombiePursuitPoint(zombie, target);
-      let waypoint = suggestedWaypoint;
-      if (suggestedWaypoint === target) {
-        zombie.pursuitWaypoint = null;
-        zombie.pursuitTargetId = target.id;
-      } else {
-        const arrivalDistance = Math.max(2, world.cell * 0.1);
-        const currentWaypoint = zombie.pursuitWaypoint;
-        const sameDetour = zombie.pursuitTargetId === target.id
-          && currentWaypoint?.obstacleId === suggestedWaypoint.obstacleId
-          && Math.hypot(currentWaypoint.x - zombie.x, currentWaypoint.y - zombie.y) >= arrivalDistance;
-        if (sameDetour) waypoint = currentWaypoint;
-        else {
-          zombie.pursuitWaypoint = { ...suggestedWaypoint };
-          zombie.pursuitTargetId = target.id;
-          waypoint = zombie.pursuitWaypoint;
-        }
-      }
-      const direction = Math.atan2(waypoint.y - zombie.y, waypoint.x - zombie.x);
-      zombie.angle = direction;
-      const speed = world.cell * ITEM_RULES.zombieSpeedCellsPerSecond * match.config.speedMultiplier;
-      zombie.vx = Math.cos(direction) * speed;
-      zombie.vy = Math.sin(direction) * speed;
-    } else {
-      zombie.pursuitWaypoint = null;
-      zombie.pursuitTargetId = target.id;
-      zombie.angle = distance > 1e-5 ? Math.atan2(dy, dx) : zombie.angle;
-      zombie.vx = 0;
-      zombie.vy = 0;
-      if (!zombie.zombieAttackTimers.has(target.id)) {
-        applyDamage(target, ITEM_RULES.zombieDamage, 'zombie', true, zombie.id);
-        zombie.zombieAttackTimers.set(target.id, ITEM_RULES.zombieAttackInterval);
-      }
-    }
-  }
-
   function updateRadiationDamage(fighter, dt) {
     const activePitIds = new Set();
     for (const pit of match.radiationPits) {
@@ -2573,6 +2608,41 @@
     }
     fighter.radiationTimers.forEach((_timeLeft, pitId) => {
       if (!activePitIds.has(pitId)) fighter.radiationTimers.delete(pitId);
+    });
+  }
+
+  function updatePriests(dt) {
+    if (!match || match.ended) return;
+    match.fighters.filter((fighter) => fighter.isPriest && !fighter.eliminated).forEach((priest) => {
+      priest.priestAttackCooldown = Math.max(0, priest.priestAttackCooldown - dt);
+      if (priest.priestAttackCooldown > 1e-6) return;
+      if (priest.priestAttacksRemaining <= 0) {
+        eliminateFighter(priest, 'priestFinished');
+        return;
+      }
+      const summoner = match.fighters.find((fighter) => fighter.id === priest.summonerId) || null;
+      const target = pickMostThreateningTarget(summoner, priest);
+      if (!target) {
+        priest.priestAttackCooldown = 0.2;
+        return;
+      }
+
+      match.itemEffects.push({
+        type: 'lightning',
+        x1: priest.x,
+        y1: priest.y,
+        x2: target.x,
+        y2: target.y,
+        life: ITEM_RULES.lightningEffectDuration,
+        maxLife: ITEM_RULES.lightningEffectDuration,
+        seed: Math.random() * Math.PI * 2,
+      });
+      applyDamage(target, ITEM_RULES.priestDamage, 'holyLightning', true, priest.id);
+      priest.priestAttacksRemaining -= 1;
+      addEvent(`${priest.name} 对 ${target.name} 施展必中神雷（-${ITEM_RULES.priestDamage} HP）`, ITEM_DEFINITIONS.holyStaff.color);
+      showToast(`${target.name} 被神圣雷击命中！`);
+      if (priest.priestAttacksRemaining <= 0) eliminateFighter(priest, 'priestFinished');
+      else priest.priestAttackCooldown = ITEM_RULES.priestAttackInterval;
     });
   }
 
@@ -2599,7 +2669,15 @@
         fighter.damageNumber.remaining = Math.max(0, fighter.damageNumber.remaining - dt);
         if (fighter.damageNumber.remaining <= 0) fighter.damageNumber = null;
       }
-      if (fighter.isZombie) updateZombieAI(fighter, dt);
+      if (fighter.isZombie) {
+        fighter.zombieContactCooldown = Math.max(0, fighter.zombieContactCooldown - dt);
+        fighter.zombieHealthDrainRemaining = Math.max(0, fighter.zombieHealthDrainRemaining - dt);
+        while (fighter.zombieHealthDrainRemaining <= 1e-6 && !fighter.eliminated) {
+          applyDamage(fighter, ITEM_RULES.zombieHealthDrain, 'zombieDecay', false);
+          if (!fighter.eliminated) fighter.zombieHealthDrainRemaining += ITEM_RULES.zombieHealthDrainInterval;
+        }
+        if (fighter.eliminated) return;
+      }
       const adrenalineScale = fighter.adrenalineRemaining > 0 ? ITEM_RULES.adrenalineSpeedMultiplier : 1;
       const slowScale = fighter.slowRemaining > 0 ? fighter.slowFactor : 1;
       const radiationScale = isInRadiationSlowZone(fighter) ? 0.5 : 1;
@@ -2640,6 +2718,7 @@
       });
     }
     match.obstacles = match.obstacles.filter((obstacle) => !obstacle.destroyed);
+    updatePriests(dt);
     updateEffects(dt);
     ITEM_SYSTEM_API.update(dt, match);
 
@@ -3039,6 +3118,27 @@
     ctx.fill();
   }
 
+  function drawPriestAdornment(size, time) {
+    ctx.save();
+    ctx.strokeStyle = '#fff0a2';
+    ctx.lineWidth = Math.max(1.2, size * 0.045);
+    ctx.shadowColor = '#ffe989';
+    ctx.shadowBlur = size * 0.12;
+    ctx.beginPath();
+    ctx.ellipse(0, -size * 0.49, size * 0.2, size * (0.07 + Math.sin(time * 0.004) * 0.006), 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = '#fff8d6';
+    ctx.lineWidth = Math.max(1, size * 0.03);
+    ctx.beginPath();
+    ctx.moveTo(0, -size * 0.43);
+    ctx.lineTo(0, -size * 0.33);
+    ctx.moveTo(-size * 0.045, -size * 0.38);
+    ctx.lineTo(size * 0.045, -size * 0.38);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   function drawBumpedFace(size) {
     ctx.strokeStyle = '#28344c';
     ctx.lineWidth = Math.max(1.5, size * 0.06);
@@ -3316,6 +3416,7 @@
     else if (mood === 'bump' || mood === 'obstacle') drawBumpedFace(size);
     else if (mood === 'dizzy') drawDizzyFace(size, time);
     else drawPersonalityFace(fighter, size, lookX, lookY);
+    if (fighter.isPriest) drawPriestAdornment(size, time);
 
     if (mood === 'wall' || mood === 'obstacle') {
       ctx.fillStyle = 'rgba(255,255,255,.92)';
@@ -3543,7 +3644,12 @@
         shield: fighter.shield ? { ...fighter.shield } : null,
         eliminated: fighter.eliminated,
         isZombie: fighter.isZombie,
+        isPriest: fighter.isPriest,
         summonerId: fighter.summonerId,
+        zombieHealthDrainRemaining: Number(fighter.zombieHealthDrainRemaining.toFixed(3)),
+        zombieContactCooldown: Number(fighter.zombieContactCooldown.toFixed(3)),
+        priestAttacksRemaining: fighter.priestAttacksRemaining,
+        priestAttackCooldown: Number(fighter.priestAttackCooldown.toFixed(3)),
         adrenalineRemaining: Number(fighter.adrenalineRemaining.toFixed(3)),
         slowRemaining: Number(fighter.slowRemaining.toFixed(3)),
         damageNumber: fighter.damageNumber ? { ...fighter.damageNumber } : null,

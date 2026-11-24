@@ -33,7 +33,7 @@
           <div class="intro-copy">
             <div class="eyebrow"><span>试验场 01</span><b>✳</b> 自定义你的方块派对</div>
             <h1 id="page-title">撞一下，<em>弹起来！</em></h1>
-            <p>方块自动弹跳、拾取并使用道具；召唤物会追击敌人，AI 会预判轨迹，比赛全程无需手动操作。</p>
+            <p>方块自动弹跳、拾取并使用道具；僵尸会随机碰撞，神父会以必中雷击保护召唤者，全程无需手动操作。</p>
           </div>
           <div class="mode-stamp glass-panel" aria-label="自动弹跳与 AI 道具对战">
             <span class="stamp-icon" aria-hidden="true">✦</span>
@@ -57,7 +57,7 @@
             <div class="item-status" id="itemStatus" role="status" aria-live="polite">普通道具 0/2 · 自动使用就绪</div>
 
             <div class="arena-shell" id="arenaShell">
-              <canvas id="gameCanvas" aria-label="方块自动弹跳并自动拾取道具；召唤法杖生成三个 50 HP 红眼僵尸；肾上腺素提高移动速度并减伤，寒冰射手发射减速冰豌豆；显示护盾血量和数字伤害提示。">
+              <canvas id="gameCanvas" aria-label="方块自动弹跳并自动拾取道具；僵尸随机弹跳、每秒流失 1 HP 并碰撞造成 5 HP 伤害；神圣法杖召唤浅色神父，周期性必中雷击；显示护盾血量和数字伤害提示。">
                 你的浏览器不支持 Canvas。
               </canvas>
               <div class="canvas-fallback" id="canvasFallback" aria-live="polite">
@@ -235,7 +235,11 @@
                 </div>
                 <div class="rule-row">
                   <span class="rule-symbol wand-symbol" aria-hidden="true">✦</span>
-                  <span><strong>召唤法杖</strong><small>召唤 3 个 50 HP 的红眼僵尸追击敌方；僵尸不会攻击召唤者，召唤者淘汰时它们消散</small></span>
+                  <span><strong>召唤法杖</strong><small>召唤 3 个 50 HP 红眼僵尸随机弹跳；每秒流失 1 HP，碰撞敌人造成 5 HP（每只僵尸每秒最多一次）；可拾取道具，不伤召唤者；召唤者淘汰时消散</small></span>
+                </div>
+                <div class="rule-row">
+                  <span class="rule-symbol priest-symbol" aria-hidden="true">✛</span>
+                  <span><strong>神圣法杖</strong><small>召唤 50 HP 的浅色神父；每 2 秒必中召唤者威胁最高的敌人，造成 10 HP；雷击 10 次或神父被击败后消失</small></span>
                 </div>
                 <div class="rule-row">
                   <span class="rule-symbol adrenaline-symbol" aria-hidden="true">⚡</span>
