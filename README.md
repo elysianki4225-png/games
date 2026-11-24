@@ -1,14 +1,30 @@
 # 方块碰碰场 · Block Bounce
 
-可直接部署到 GitHub Pages 的纯静态小游戏原型。六个不同颜色、不同性格表情的小方块会在边界内自动直线弹跳：撞墙反弹，彼此碰撞时分开并交换法向速度；碰撞会触发表情变化和轻量粒子效果。
+可直接部署到 GitHub Pages 的纯静态小游戏。方块沿初始速度自动弹跳，不追逐、不受玩家操控；撞到边界、其他方块或障碍物时会反弹，碰撞还会触发表情变化。
 
-## 当前原型
+## 已实现
 
-- 6 个彩色方块角色，各有专属待机表情；撞墙时惊讶，碰撞时眩晕/眯眼，偶尔还会眨眼。
-- 自动弹跳，不追逐、不由玩家移动；没有炮管、射击或血量系统。
-- 硬边界反弹、方块间 AABB 碰撞分离与弹性反弹、碰撞统计和最近事件提示。
-- 浅色玻璃拟态界面；窄屏手机使用更高、更宽的竞技场和更大的方块，桌面使用更宽的场地。
-- 暂停、继续、重新开始；Canvas 按设备像素比绘制，不需要图片或第三方依赖。
+- 浅色玻璃拟态界面；响应式大竞技场，并带可见的硬边界。
+- 对局设置：方块数量 1–48、障碍物数量 0–12；默认 8 个方块、4 个障碍物。
+- 每局随机生成分散的 HSL 色相，当前对局内颜色唯一；不同方块有不同的待机表情，碰撞时会惊讶、眯眼或晕乎乎。
+- 方块与边界、方块与方块、方块与矩形障碍物的实体碰撞和反弹；随机生成时会避开障碍物及其他方块。
+- 暂停、重新开始、碰撞计数和最近碰撞事件。
+- 道具系统只定义了生命周期 / 更新 / 绘制 / 碰撞接口，默认关闭且没有实现道具内容。
+- Canvas 首帧绘制失败时显示可见的 HTML 方块回退画面，不会只留下空黑场。
+
+## 游戏配置接口
+
+浏览器控制台可用 `window.BlockBounce`：
+
+```js
+BlockBounce.startMatch({ blockCount: 12, obstacleCount: 5 });
+BlockBounce.getConfig();
+BlockBounce.getSnapshot();
+BlockBounce.createUniqueColors(12); // 返回本局互不重复的颜色
+BlockBounce.systems.items.enabled; // false：预留接口，尚未启用
+```
+
+默认值和边界限制在 `BlockBounce.defaults` / `BlockBounce.limits` 中；障碍物创建接口位于 `BlockBounce.systems.obstacles`。
 
 ## 本地运行
 
@@ -20,6 +36,6 @@ python3 -m http.server 8000
 
 然后访问 `http://localhost:8000`。
 
-## 发布到 GitHub Pages
+## GitHub Pages
 
-文件位于仓库根目录。合并到 `main` 后，打开 **Settings → Pages**，选择 **Deploy from a branch**，分支选 `main`、目录选 `/(root)` 并保存即可。
+文件位于仓库根目录。合并到 `main` 后，打开 **Settings → Pages**，选择 **Deploy from a branch**，分支选择 `main`、目录选择 `/(root)` 并保存即可。

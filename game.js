@@ -3,10 +3,21 @@
 
   const canvas = document.getElementById('gameCanvas');
   const arenaShell = document.getElementById('arenaShell');
+  const canvasFallback = document.getElementById('canvasFallback');
+  const fallbackMessage = document.getElementById('canvasFallbackMessage');
   if (!canvas || !arenaShell || !canvas.getContext) return;
 
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
+  let ctx;
+  try {
+    ctx = canvas.getContext('2d');
+  } catch (error) {
+    if (fallbackMessage) fallbackMessage.textContent = '浏览器暂不支持画布，碰碰方块在上面等你';
+    return;
+  }
+  if (!ctx) {
+    if (fallbackMessage) fallbackMessage.textContent = '浏览器暂不支持画布，碰碰方块在上面等你';
+    return;
+  }
 
   const roster = document.getElementById('roster');
   const matchState = document.getElementById('matchState');
@@ -19,26 +30,84 @@
   const collisionCount = document.getElementById('collisionCount');
   const wallCount = document.getElementById('wallCount');
   const blockCount = document.getElementById('blockCount');
+  const obstacleHitCount = document.getElementById('obstacleHitCount');
   const eventFeed = document.getElementById('eventFeed');
+  const blockCountRange = document.getElementById('blockCountRange');
+  const blockCountNumber = document.getElementById('blockCountNumber');
+  const blockCountOutput = document.getElementById('blockCountOutput');
+  const obstacleCountRange = document.getElementById('obstacleCountRange');
+  const obstacleCountNumber = document.getElementById('obstacleCountNumber');
+  const obstacleCountOutput = document.getElementById('obstacleCountOutput');
+  const applySettingsButton = document.getElementById('applySettingsButton');
+  const defaultSettingsButton = document.getElementById('defaultSettingsButton');
 
+  const DEFAULT_MATCH_CONFIG = Object.freeze({
+    blockCount: 8,
+    obstacleCount: 4,
+    itemsEnabled: false,
+  });
+  const MATCH_LIMITS = Object.freeze({
+    blockCount: Object.freeze({ min: 1, max: 48 }),
+    obstacleCount: Object.freeze({ min: 0, max: 12 }),
+  });
   const BORDER = 7;
-  const COLORS = [
-    { id: 'blue', name: '泡泡', color: '#4e9fff', light: '#bfe2ff', dark: '#2877d1', glow: 'rgba(78, 159, 255, 0.34)', face: 'smile', idle: '开心漂浮' },
-    { id: 'mint', name: '豆豆', color: '#35ce98', light: '#b8ffe0', dark: '#1c9d6e', glow: 'rgba(53, 206, 152, 0.31)', face: 'goofy', idle: '吐舌发呆' },
-    { id: 'coral', name: '烈烈', color: '#ff687d', light: '#ffd2d8', dark: '#d3425a', glow: 'rgba(255, 104, 125, 0.31)', face: 'sassy', idle: '酷酷巡视' },
-    { id: 'sun', name: '团子', color: '#ffbe45', light: '#fff0bb', dark: '#dd8a22', glow: 'rgba(255, 190, 69, 0.34)', face: 'sleepy', idle: '困困打盹' },
-    { id: 'violet', name: '露露', color: '#a47dff', light: '#e2d4ff', dark: '#7652d2', glow: 'rgba(164, 125, 255, 0.34)', face: 'starry', idle: '星星眼' },
-    { id: 'aqua', name: '薄荷', color: '#39cbd1', light: '#c4fbfa', dark: '#20969f', glow: 'rgba(57, 203, 209, 0.32)', face: 'wink', idle: '偷偷眨眼' },
-  ];
+  const NAMES = ['泡泡', '豆豆', '烈烈', '团子', '露露', '薄荷', '咕噜', '柚子', '跳跳', '米粒', '布丁', '云朵'];
+  const PERSONALITIES = ['smile', 'goofy', 'sassy', 'sleepy', 'starry', 'wink'];
+  const PERSONALITY_LABELS = {
+    smile: '开心漂浮',
+    goofy: '吐舌发呆',
+    sassy: '酷酷巡视',
+    sleepy: '困困打盹',
+    starry: '星星眼',
+    wink: '偷偷眨眼',
+  };
+
+  // Future item-system contract only. Items are deliberately not implemented or enabled yet.
+  const ITEM_SYSTEM_API = {
+    id: 'items',
+    enabled: false,
+    initialize(_context) {},
+    update(_deltaTime, _context) {},
+    render(_context) {},
+    onCollision(_event, _context) {},
+    dispose() {},
+  };
 
   let world = null;
   let match = null;
+  let activeConfig = DEFAULT_MATCH_CONFIG;
   let animationFrame = 0;
   let previousTime = 0;
   let lastHudTime = 0;
   let toastTimer = 0;
   let resizeFrame = 0;
   let resizeObserver = null;
+  let hasRendered = false;
+  let renderFailed = false;
+
+  const requestFrame = typeof window.requestAnimationFrame === 'function'
+    ? window.requestAnimationFrame.bind(window)
+    : (callback) => window.setTimeout(() => callback(performance.now()), 16);
+  const cancelFrame = typeof window.cancelAnimationFrame === 'function'
+    ? window.cancelAnimationFrame.bind(window)
+    : window.clearTimeout.bind(window);
+
+  function clampInteger(value, min, max, fallback) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(min, Math.min(max, Math.round(parsed)));
+  }
+
+  function normalizeMatchConfig(overrides = {}, base = activeConfig || DEFAULT_MATCH_CONFIG) {
+    const input = overrides && typeof overrides === 'object' ? overrides : {};
+    const defaults = base && typeof base === 'object' ? base : DEFAULT_MATCH_CONFIG;
+    return Object.freeze({
+      blockCount: clampInteger(input.blockCount, MATCH_LIMITS.blockCount.min, MATCH_LIMITS.blockCount.max, defaults.blockCount),
+      obstacleCount: clampInteger(input.obstacleCount, MATCH_LIMITS.obstacleCount.min, MATCH_LIMITS.obstacleCount.max, defaults.obstacleCount),
+      // Reserving the property now keeps future saved match configs forward-compatible.
+      itemsEnabled: false,
+    });
+  }
 
   function isPhoneLayout() {
     return (window.innerWidth || document.documentElement.clientWidth) <= 700;
@@ -55,7 +124,7 @@
       width,
       height,
       cell,
-      blockSize: Math.max(19, cell * 0.88),
+      baseBlockSize: Math.max(18, cell * 0.88),
       border: Math.max(BORDER, Math.min(9, cell * 0.16)),
       columns: Math.ceil(width / cell),
       rows: Math.ceil(height / cell),
@@ -66,55 +135,152 @@
   function applyCanvasSize() {
     const width = arenaShell.clientWidth;
     const height = arenaShell.clientHeight;
-    if (width < 80 || height < 120) return;
+    if (width < 80 || height < 120) return false;
 
     const oldWorld = world;
     const nextWorld = measureWorld(width, height);
-    const pixelWidth = Math.round(width * nextWorld.dpr);
-    const pixelHeight = Math.round(height * nextWorld.dpr);
-    const backingChanged = canvas.width !== pixelWidth || canvas.height !== pixelHeight;
-    if (backingChanged) {
+    const pixelWidth = Math.max(1, Math.round(width * nextWorld.dpr));
+    const pixelHeight = Math.max(1, Math.round(height * nextWorld.dpr));
+    if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
       canvas.width = pixelWidth;
       canvas.height = pixelHeight;
     }
-    ctx.setTransform(nextWorld.dpr, 0, 0, nextWorld.dpr, 0, 0);
+    if (typeof ctx.setTransform === 'function') ctx.setTransform(nextWorld.dpr, 0, 0, nextWorld.dpr, 0, 0);
+    else ctx.scale(nextWorld.dpr, nextWorld.dpr);
 
     world = nextWorld;
-    if (!match || !oldWorld) return;
+    if (!match || !oldWorld) return true;
 
     const scaleX = nextWorld.width / oldWorld.width;
     const scaleY = nextWorld.height / oldWorld.height;
     match.fighters.forEach((fighter) => {
       fighter.x *= scaleX;
       fighter.y *= scaleY;
-      fighter.size = nextWorld.blockSize;
+      fighter.size = blockSizeForCount(match.config.blockCount);
       keepInside(fighter, false);
     });
-    for (let pass = 0; pass < 3; pass += 1) resolveBlockCollisions(false);
+    match.obstacles = createObstacles(match.config.obstacleCount);
+    for (let pass = 0; pass < 3; pass += 1) {
+      match.fighters.forEach((fighter) => resolveObstacleCollisions(fighter, false));
+      resolveBlockCollisions(false);
+    }
     render(performance.now());
+    return true;
   }
 
-  function makeFighter(config, index) {
-    const placements = [
-      [0.16, 0.18],
-      [0.5, 0.25],
-      [0.84, 0.18],
-      [0.17, 0.77],
-      [0.5, 0.82],
-      [0.83, 0.76],
-    ];
-    const [px, py] = placements[index];
-    const size = world.blockSize;
-    const safe = world.border + size / 2 + 3;
-    const areaWidth = Math.max(1, world.width - safe * 2);
-    const areaHeight = Math.max(1, world.height - safe * 2);
-    const angle = Math.random() * Math.PI * 2;
-    const speed = world.cell * (1.55 + Math.random() * 0.65);
+  function blockSizeForCount(count) {
+    const densityScale = Math.max(0.54, 1 - Math.max(0, count - 12) * 0.011);
+    return Math.max(14, world.baseBlockSize * densityScale);
+  }
 
+  function hslColor(hue, saturation, lightness, alpha = null) {
+    const hueText = Number(hue.toFixed(2));
+    if (alpha === null) return `hsl(${hueText} ${saturation}% ${lightness}%)`;
+    return `hsla(${hueText} ${saturation}% ${lightness}% / ${alpha})`;
+  }
+
+  function createUniqueColors(count, randomStart = Math.random() * 360) {
+    const safeCount = clampInteger(count, 1, MATCH_LIMITS.blockCount.max, DEFAULT_MATCH_CONFIG.blockCount);
+    const hueStep = 360 / safeCount;
+    const result = [];
+    const usedHueKeys = new Set();
+
+    for (let index = 0; index < safeCount; index += 1) {
+      let hue = ((randomStart + index * hueStep) % 360 + 360) % 360;
+      // Rounding collisions are unlikely at the supported counts, but keep the uniqueness invariant explicit.
+      while (usedHueKeys.has(hue.toFixed(2))) hue = (hue + 0.19) % 360;
+      usedHueKeys.add(hue.toFixed(2));
+      const saturation = 77 + (index % 3) * 6;
+      const lightness = 55 + (index % 4) * 3;
+      result.push({
+        color: hslColor(hue, saturation, lightness),
+        light: hslColor(hue, saturation, Math.min(88, lightness + 25)),
+        dark: hslColor(hue, saturation, Math.max(28, lightness - 25)),
+        glow: hslColor(hue, saturation, lightness, 0.36),
+        hue,
+      });
+    }
+    return result;
+  }
+
+  function createObstacles(count) {
+    const safeCount = clampInteger(count, 0, MATCH_LIMITS.obstacleCount.max, 0);
+    if (!world || safeCount <= 0) return [];
+    const columns = Math.max(1, Math.ceil(Math.sqrt(safeCount * (world.width / world.height))));
+    const rows = Math.ceil(safeCount / columns);
+    const marginX = world.width * 0.1;
+    const marginY = world.height * 0.11;
+    const spacingX = (world.width - marginX * 2) / (columns + 1);
+    const spacingY = (world.height - marginY * 2) / (rows + 1);
+    const obstacleWidth = Math.max(18, Math.min(world.cell * 1.28, spacingX * 0.58));
+    const obstacleHeight = Math.max(12, Math.min(world.cell * 0.72, spacingY * 0.44));
+    const obstacles = [];
+
+    for (let index = 0; index < safeCount; index += 1) {
+      const column = index % columns;
+      const row = Math.floor(index / columns);
+      obstacles.push({
+        id: `obstacle-${index + 1}`,
+        x: marginX + spacingX * (column + 1),
+        y: marginY + spacingY * (row + 1),
+        width: obstacleWidth,
+        height: obstacleHeight,
+        accent: index % 2 === 0 ? '#a9c2e8' : '#c3b4e8',
+      });
+    }
+    return obstacles;
+  }
+
+  function obstacleOverlaps(x, y, size, obstacle, padding = 0) {
+    const halfBlock = size / 2 + padding;
+    return Math.abs(x - obstacle.x) < halfBlock + obstacle.width / 2
+      && Math.abs(y - obstacle.y) < halfBlock + obstacle.height / 2;
+  }
+
+  function spawnPosition(size, placed) {
+    const safe = world.border + size / 2 + 3;
+    const minX = safe;
+    const maxX = world.width - safe;
+    const minY = safe;
+    const maxY = world.height - safe;
+
+    for (let attempt = 0; attempt < 1400; attempt += 1) {
+      const x = minX + Math.random() * Math.max(1, maxX - minX);
+      const y = minY + Math.random() * Math.max(1, maxY - minY);
+      const touchesObstacle = match.obstacles.some((obstacle) => obstacleOverlaps(x, y, size, obstacle, 5));
+      const touchesBlock = placed.some((other) => Math.abs(x - other.x) < (size + other.size) * 0.62
+        && Math.abs(y - other.y) < (size + other.size) * 0.62);
+      if (!touchesObstacle && !touchesBlock) return { x, y };
+    }
+
+    // Dense custom matches still start safely inside the field; physics separates any close neighbors.
+    const columns = Math.max(1, Math.ceil(Math.sqrt(placed.length + 1)));
+    const rows = Math.ceil((placed.length + 1) / columns);
+    const slot = placed.length;
     return {
-      ...config,
-      x: safe + areaWidth * px,
-      y: safe + areaHeight * py,
+      x: minX + (maxX - minX) * ((slot % columns) + 0.5) / columns,
+      y: minY + (maxY - minY) * (Math.floor(slot / columns) + 0.5) / rows,
+    };
+  }
+
+  function createFighter(appearance, index, count, placed) {
+    const size = blockSizeForCount(count);
+    const position = spawnPosition(size, placed);
+    const angle = Math.random() * Math.PI * 2;
+    const speed = world.cell * (1.45 + Math.random() * 0.72);
+    const name = NAMES[index] || `方块 ${String(index + 1).padStart(2, '0')}`;
+    return {
+      id: `block-${index + 1}`,
+      name,
+      color: appearance.color,
+      light: appearance.light,
+      dark: appearance.dark,
+      glow: appearance.glow,
+      hue: appearance.hue,
+      personality: PERSONALITIES[index % PERSONALITIES.length],
+      idle: PERSONALITY_LABELS[PERSONALITIES[index % PERSONALITIES.length]],
+      x: position.x,
+      y: position.y,
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
       size,
@@ -122,7 +288,7 @@
       faceMood: 'idle',
       moodUntil: 0,
       lastBumpAt: -Infinity,
-      blinkIn: 1.4 + Math.random() * 4.5,
+      blinkIn: 1.2 + Math.random() * 4.6,
       blinkLeft: 0,
       animationSeed: Math.random() * Math.PI * 2,
     };
@@ -163,20 +329,43 @@
     eventFeed.append(entry);
   }
 
-  function startMatch() {
+  function startMatch(overrides = null) {
+    if (overrides && typeof overrides === 'object') {
+      activeConfig = normalizeMatchConfig(overrides, activeConfig);
+    } else if (!activeConfig) {
+      activeConfig = DEFAULT_MATCH_CONFIG;
+    }
     applyCanvasSize();
-    if (!world) return;
+    if (!world) {
+      if (fallbackMessage) fallbackMessage.textContent = '竞技场还在调整大小，请稍等一下';
+      return null;
+    }
+
+    const matchConfig = normalizeMatchConfig(activeConfig, DEFAULT_MATCH_CONFIG);
+    activeConfig = matchConfig;
     match = {
-      fighters: COLORS.map(makeFighter),
+      id: `match-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+      config: matchConfig,
+      fighters: [],
+      obstacles: createObstacles(matchConfig.obstacleCount),
       pairCooldowns: new Map(),
+      obstacleCooldowns: new Map(),
       effects: [],
       collisions: 0,
       wallHits: 0,
       blockHits: 0,
+      obstacleHits: 0,
       paused: false,
-      lastToastAt: 0,
-      lastEventAt: 0,
+      lastToastAt: -Infinity,
+      lastEventAt: -Infinity,
     };
+
+    const appearances = createUniqueColors(matchConfig.blockCount);
+    appearances.forEach((appearance, index) => {
+      const fighter = createFighter(appearance, index, matchConfig.blockCount, match.fighters);
+      match.fighters.push(fighter);
+    });
+
     pauseButton.disabled = false;
     pauseButton.querySelector('span').textContent = '暂停';
     pauseButton.setAttribute('aria-label', '暂停弹跳');
@@ -188,22 +377,29 @@
     createRoster();
     resetEventFeed();
     syncHud();
+    ITEM_SYSTEM_API.initialize({ config: match.config, matchId: match.id });
+    hasRendered = false;
+    renderFailed = false;
+    if (canvasFallback) canvasFallback.hidden = false;
+    if (fallbackMessage) fallbackMessage.textContent = '碰碰场正在加载…';
     render(performance.now());
+    return getMatchSnapshot();
   }
 
   function setMood(fighter, mood, duration = 720) {
     const now = performance.now();
     let nextMood = mood;
-    if (mood === 'bump' && now - fighter.lastBumpAt < 850) nextMood = 'dizzy';
+    if (mood === 'bump' && now - fighter.lastBumpAt < 900) nextMood = 'dizzy';
     fighter.lastBumpAt = now;
     fighter.faceMood = nextMood;
-    fighter.moodUntil = now + (nextMood === 'dizzy' ? 1000 : duration);
+    fighter.moodUntil = now + (nextMood === 'dizzy' ? 1050 : duration);
   }
 
   function moodLabel(fighter, now) {
     if (fighter.faceMood !== 'idle' && now < fighter.moodUntil) {
       if (fighter.faceMood === 'wall') return '撞墙惊讶';
       if (fighter.faceMood === 'bump') return '碰到伙伴';
+      if (fighter.faceMood === 'obstacle') return '撞到障碍';
       if (fighter.faceMood === 'dizzy') return '晕乎乎';
     }
     return fighter.idle;
@@ -224,6 +420,7 @@
     collisionCount.textContent = String(match.collisions);
     wallCount.textContent = String(match.wallHits);
     blockCount.textContent = String(match.blockHits);
+    obstacleHitCount.textContent = String(match.obstacleHits);
   }
 
   function nearestWallBounds(fighter) {
@@ -264,63 +461,140 @@
     keepInside(fighter, true);
   }
 
-  function pairNormal(a, b, overlapX, overlapY) {
+  function registerWallCollision(fighter, hitX, hitY) {
+    match.collisions += 1;
+    match.wallHits += 1;
+    setMood(fighter, 'wall', 680);
+    const x = hitX ? Math.max(world.border + 4, Math.min(world.width - world.border - 4, fighter.x)) : fighter.x;
+    const y = hitY ? Math.max(world.border + 4, Math.min(world.height - world.border - 4, fighter.y)) : fighter.y;
+    addBurst(x, y, [fighter.color, fighter.light, '#ffffff'], 7);
+    addEvent(`${fighter.name} 撞到边界，弹回来啦`, fighter.color);
+    showToast(`${fighter.name}：哎呀！撞墙啦`);
+    ITEM_SYSTEM_API.onCollision({ type: 'wall', block: fighter.id, axes: { x: hitX, y: hitY } }, match);
+  }
+
+  function obstacleOverlaps(x, y, size, obstacle, padding = 0) {
+    const halfBlock = size / 2 + padding;
+    return Math.abs(x - obstacle.x) < halfBlock + obstacle.width / 2
+      && Math.abs(y - obstacle.y) < halfBlock + obstacle.height / 2;
+  }
+
+  function obstacleNormal(fighter, obstacle, overlapX, overlapY) {
+    const dx = fighter.x - obstacle.x;
+    const dy = fighter.y - obstacle.y;
     if (overlapX < overlapY) {
-      if (Math.abs(b.x - a.x) < 0.001) return (b.vx - a.vx <= 0 ? 1 : -1);
-      return b.x > a.x ? 1 : -1;
+      if (Math.abs(dx) > 0.001) return { axis: 'x', sign: Math.sign(dx) };
+      return { axis: 'x', sign: fighter.vx > 0 ? -1 : 1 };
     }
-    if (Math.abs(b.y - a.y) < 0.001) return (b.vy - a.vy <= 0 ? 1 : -1);
-    return b.y > a.y ? 1 : -1;
+    if (Math.abs(dy) > 0.001) return { axis: 'y', sign: Math.sign(dy) };
+    return { axis: 'y', sign: fighter.vy > 0 ? -1 : 1 };
+  }
+
+  function resolveObstacleCollision(fighter, obstacle, countHit) {
+    const overlapX = fighter.size / 2 + obstacle.width / 2 - Math.abs(fighter.x - obstacle.x);
+    const overlapY = fighter.size / 2 + obstacle.height / 2 - Math.abs(fighter.y - obstacle.y);
+    if (overlapX <= 0 || overlapY <= 0) return false;
+
+    const normal = obstacleNormal(fighter, obstacle, overlapX, overlapY);
+    const incoming = normal.axis === 'x' ? fighter.vx * normal.sign < 0 : fighter.vy * normal.sign < 0;
+    const overlap = (normal.axis === 'x' ? overlapX : overlapY) + 0.15;
+    if (normal.axis === 'x') {
+      fighter.x += normal.sign * overlap;
+      if (incoming) fighter.vx = -fighter.vx;
+    } else {
+      fighter.y += normal.sign * overlap;
+      if (incoming) fighter.vy = -fighter.vy;
+    }
+
+    const cooldownKey = `${fighter.id}:${obstacle.id}`;
+    if (countHit && incoming && (match.obstacleCooldowns.get(cooldownKey) || 0) <= 0) {
+      registerObstacleCollision(fighter, obstacle, cooldownKey);
+    }
+    keepInside(fighter, countHit);
+    return true;
+  }
+
+  function resolveObstacleCollisions(fighter, countHit) {
+    if (!match.obstacles.length) return;
+    match.obstacles.forEach((obstacle) => resolveObstacleCollision(fighter, obstacle, countHit));
+  }
+
+  function registerObstacleCollision(fighter, obstacle, cooldownKey) {
+    match.obstacleCooldowns.set(cooldownKey, 0.32);
+    match.collisions += 1;
+    match.obstacleHits += 1;
+    setMood(fighter, 'obstacle', 760);
+    addBurst(fighter.x, fighter.y, [fighter.color, obstacle.accent, '#ffffff'], 9);
+    addEvent(`${fighter.name} 碰到障碍，弹开啦`, fighter.color);
+    showToast(`${fighter.name}：“咚！”`);
+    ITEM_SYSTEM_API.onCollision({ type: 'obstacle', block: fighter.id, obstacle: obstacle.id }, match);
+  }
+
+  function blockNormal(first, second, overlapX, overlapY) {
+    if (overlapX < overlapY) {
+      if (Math.abs(second.x - first.x) > 0.001) return { axis: 'x', sign: second.x > first.x ? 1 : -1 };
+      return { axis: 'x', sign: second.vx - first.vx <= 0 ? 1 : -1 };
+    }
+    if (Math.abs(second.y - first.y) > 0.001) return { axis: 'y', sign: second.y > first.y ? 1 : -1 };
+    return { axis: 'y', sign: second.vy - first.vy <= 0 ? 1 : -1 };
   }
 
   function resolveBlockCollisions(countHit) {
     if (!match || !world) return;
-    for (let firstIndex = 0; firstIndex < match.fighters.length; firstIndex += 1) {
-      const first = match.fighters[firstIndex];
-      for (let secondIndex = firstIndex + 1; secondIndex < match.fighters.length; secondIndex += 1) {
-        const second = match.fighters[secondIndex];
-        const dx = second.x - first.x;
-        const dy = second.y - first.y;
-        const overlapX = (first.size + second.size) / 2 - Math.abs(dx);
-        const overlapY = (first.size + second.size) / 2 - Math.abs(dy);
+    const fighters = match.fighters;
+    for (let firstIndex = 0; firstIndex < fighters.length; firstIndex += 1) {
+      const first = fighters[firstIndex];
+      for (let secondIndex = firstIndex + 1; secondIndex < fighters.length; secondIndex += 1) {
+        const second = fighters[secondIndex];
+        const overlapX = (first.size + second.size) / 2 - Math.abs(second.x - first.x);
+        const overlapY = (first.size + second.size) / 2 - Math.abs(second.y - first.y);
         if (overlapX <= 0 || overlapY <= 0) continue;
 
-        const axis = overlapX < overlapY ? 'x' : 'y';
-        const sign = pairNormal(first, second, overlapX, overlapY);
-        const overlap = (axis === 'x' ? overlapX : overlapY) + 0.15;
-        if (axis === 'x') {
-          first.x -= sign * overlap * 0.5;
-          second.x += sign * overlap * 0.5;
+        const normal = blockNormal(first, second, overlapX, overlapY);
+        const overlap = (normal.axis === 'x' ? overlapX : overlapY) + 0.15;
+        if (normal.axis === 'x') {
+          first.x -= normal.sign * overlap * 0.5;
+          second.x += normal.sign * overlap * 0.5;
         } else {
-          first.y -= sign * overlap * 0.5;
-          second.y += sign * overlap * 0.5;
+          first.y -= normal.sign * overlap * 0.5;
+          second.y += normal.sign * overlap * 0.5;
         }
 
-        const relativeSpeed = axis === 'x'
-          ? (second.vx - first.vx) * sign
-          : (second.vy - first.vy) * sign;
+        const relativeSpeed = normal.axis === 'x'
+          ? (second.vx - first.vx) * normal.sign
+          : (second.vy - first.vy) * normal.sign;
         const pairKey = `${first.id}:${second.id}`;
         const canCount = countHit && (match.pairCooldowns.get(pairKey) || 0) <= 0;
         if (relativeSpeed < 0) {
-          if (axis === 'x') [first.vx, second.vx] = [second.vx, first.vx];
+          // Equal-mass square blocks exchange their velocity on the impact axis.
+          if (normal.axis === 'x') [first.vx, second.vx] = [second.vx, first.vx];
           else [first.vy, second.vy] = [second.vy, first.vy];
           if (canCount) registerBlockCollision(first, second, pairKey);
         }
-
         keepInside(first, countHit);
         keepInside(second, countHit);
       }
     }
   }
 
+  function registerBlockCollision(first, second, pairKey) {
+    match.pairCooldowns.set(pairKey, 0.28);
+    match.collisions += 1;
+    match.blockHits += 1;
+    setMood(first, 'bump', 760);
+    setMood(second, 'bump', 760);
+    addBurst((first.x + second.x) / 2, (first.y + second.y) / 2, [first.color, second.color, '#ffffff'], 11);
+    addEvent(`${first.name} 和 ${second.name} 砰地弹开了`, first.color);
+    showToast(`BOING！${first.name} × ${second.name}`);
+    ITEM_SYSTEM_API.onCollision({ type: 'block', first: first.id, second: second.id }, match);
+  }
+
   function addEvent(text, color) {
     const now = performance.now();
-    if (now - match.lastEventAt < 210) return;
+    if (now - match.lastEventAt < 190) return;
     match.lastEventAt = now;
+    if (eventFeed.firstElementChild?.classList.contains('empty-event')) eventFeed.replaceChildren();
 
-    if (eventFeed.firstElementChild?.classList.contains('empty-event')) {
-      eventFeed.replaceChildren();
-    }
     const item = document.createElement('li');
     item.style.setProperty('--event-color', color);
     const dot = document.createElement('span');
@@ -333,17 +607,18 @@
 
   function showToast(message) {
     const now = performance.now();
-    if (now - match.lastToastAt < 480) return;
+    if (now - match.lastToastAt < 420) return;
     match.lastToastAt = now;
     collisionToast.textContent = message;
     collisionToast.hidden = false;
     window.clearTimeout(toastTimer);
     toastTimer = window.setTimeout(() => {
       collisionToast.hidden = true;
-    }, 850);
+    }, 820);
   }
 
   function addBurst(x, y, colors, amount = 8) {
+    if (!match) return;
     for (let index = 0; index < amount; index += 1) {
       const angle = Math.random() * Math.PI * 2;
       const speed = 24 + Math.random() * 100;
@@ -361,30 +636,6 @@
     }
   }
 
-  function registerWallCollision(fighter, hitX, hitY) {
-    match.collisions += 1;
-    match.wallHits += 1;
-    setMood(fighter, 'wall', 670);
-    const x = hitX ? Math.max(world.border + 4, Math.min(world.width - world.border - 4, fighter.x)) : fighter.x;
-    const y = hitY ? Math.max(world.border + 4, Math.min(world.height - world.border - 4, fighter.y)) : fighter.y;
-    addBurst(x, y, [fighter.color, fighter.light, '#ffffff'], 7);
-    addEvent(`${fighter.name} 撞到墙，弹回来啦`, fighter.color);
-    showToast(`${fighter.name}：哎呀！撞墙啦`);
-    syncHud();
-  }
-
-  function registerBlockCollision(first, second, pairKey) {
-    match.pairCooldowns.set(pairKey, 0.25);
-    match.collisions += 1;
-    match.blockHits += 1;
-    setMood(first, 'bump', 760);
-    setMood(second, 'bump', 760);
-    addBurst((first.x + second.x) / 2, (first.y + second.y) / 2, [first.color, second.color, '#ffffff'], 11);
-    addEvent(`${first.name} 和 ${second.name} 砰地弹开了`, first.color);
-    showToast(`BOING！${first.name} × ${second.name}`);
-    syncHud();
-  }
-
   function updateEffects(dt) {
     const remaining = [];
     match.effects.forEach((effect) => {
@@ -398,19 +649,25 @@
     match.effects = remaining;
   }
 
+  function decrementCooldowns(map, dt) {
+    map.forEach((timeLeft, key) => {
+      if (timeLeft <= dt) map.delete(key);
+      else map.set(key, timeLeft - dt);
+    });
+  }
+
   function update(dt) {
     if (!match || match.paused) return;
-    match.pairCooldowns.forEach((timeLeft, key) => {
-      if (timeLeft <= dt) match.pairCooldowns.delete(key);
-      else match.pairCooldowns.set(key, timeLeft - dt);
-    });
-
+    decrementCooldowns(match.pairCooldowns, dt);
+    decrementCooldowns(match.obstacleCooldowns, dt);
     const now = performance.now();
+
     match.fighters.forEach((fighter) => {
       fighter.x += fighter.vx * dt;
       fighter.y += fighter.vy * dt;
       fighter.angle = Math.atan2(fighter.vy, fighter.vx);
       updateWalls(fighter);
+      resolveObstacleCollisions(fighter, true);
 
       if (fighter.faceMood !== 'idle' && now >= fighter.moodUntil) fighter.faceMood = 'idle';
       fighter.blinkIn -= dt;
@@ -421,11 +678,17 @@
       }
     });
 
-    resolveBlockCollisions(true);
-    resolveBlockCollisions(true);
+    for (let pass = 0; pass < 2; pass += 1) {
+      resolveBlockCollisions(true);
+      match.fighters.forEach((fighter) => {
+        resolveObstacleCollisions(fighter, true);
+        keepInside(fighter, true);
+      });
+    }
     updateEffects(dt);
+    ITEM_SYSTEM_API.update(dt, match);
 
-    if (now - lastHudTime > 120) {
+    if (now - lastHudTime > 110) {
       syncHud();
       lastHudTime = now;
     }
@@ -472,21 +735,20 @@
     ctx.fillStyle = glow;
     ctx.fillRect(0, 0, world.width, world.height);
 
-    const cell = world.cell;
     ctx.beginPath();
     ctx.strokeStyle = 'rgba(186, 207, 248, 0.115)';
     ctx.lineWidth = 1;
-    for (let x = world.border; x <= world.width - world.border; x += cell) {
+    for (let x = world.border; x <= world.width - world.border; x += world.cell) {
       ctx.moveTo(Math.round(x) + 0.5, world.border);
       ctx.lineTo(Math.round(x) + 0.5, world.height - world.border);
     }
-    for (let y = world.border; y <= world.height - world.border; y += cell) {
+    for (let y = world.border; y <= world.height - world.border; y += world.cell) {
       ctx.moveTo(world.border, Math.round(y) + 0.5);
       ctx.lineTo(world.width - world.border, Math.round(y) + 0.5);
     }
     ctx.stroke();
 
-    // This luminous rectangular frame is the real, solid movement boundary.
+    // The bright frame is both a visible arena border and the actual solid boundary.
     ctx.save();
     ctx.shadowColor = 'rgba(219, 232, 255, 0.92)';
     ctx.shadowBlur = 16;
@@ -509,6 +771,33 @@
     ctx.fillRect(world.border + 1, world.height - world.border - mark - 1, 2, mark);
     ctx.fillRect(world.width - world.border - mark - 1, world.height - world.border - 3, mark, 2);
     ctx.fillRect(world.width - world.border - 3, world.height - world.border - mark - 1, 2, mark);
+  }
+
+  function drawObstacles(time) {
+    if (!match.obstacles.length) return;
+    match.obstacles.forEach((obstacle, index) => {
+      ctx.save();
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.42)';
+      ctx.shadowBlur = 11;
+      ctx.shadowOffsetY = 5;
+      const surface = ctx.createLinearGradient(obstacle.x, obstacle.y - obstacle.height / 2, obstacle.x, obstacle.y + obstacle.height / 2);
+      surface.addColorStop(0, '#677b9c');
+      surface.addColorStop(1, '#354662');
+      ctx.fillStyle = surface;
+      roundedRect(obstacle.x - obstacle.width / 2, obstacle.y - obstacle.height / 2, obstacle.width, obstacle.height, obstacle.height * 0.38);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(229, 239, 255, 0.8)';
+      roundedRect(obstacle.x - obstacle.width / 2 + 0.5, obstacle.y - obstacle.height / 2 + 0.5, obstacle.width - 1, obstacle.height - 1, obstacle.height * 0.35);
+      ctx.stroke();
+      ctx.fillStyle = obstacle.accent;
+      ctx.globalAlpha = 0.7 + Math.sin(time * 0.003 + index) * 0.09;
+      roundedRect(obstacle.x - obstacle.width * 0.22, obstacle.y - obstacle.height * 0.11, obstacle.width * 0.44, Math.max(2, obstacle.height * 0.11), obstacle.height * 0.055);
+      ctx.fill();
+      ctx.restore();
+    });
   }
 
   function drawBackgroundAura(fighter, time) {
@@ -612,7 +901,7 @@
     ctx.fill();
   }
 
-  function drawPersonalityFace(fighter, size, lookX, lookY, time) {
+  function drawPersonalityFace(fighter, size, lookX, lookY) {
     const eyeY = -size * 0.12;
     const eyeDX = size * 0.17;
     const eyeW = size * 0.17;
@@ -620,7 +909,7 @@
     const pupilX = lookX * size * 0.035;
     const pupilY = lookY * size * 0.035;
 
-    if (fighter.face === 'wink') {
+    if (fighter.personality === 'wink') {
       ctx.strokeStyle = '#25324b';
       ctx.lineWidth = Math.max(1.5, size * 0.055);
       ctx.lineCap = 'round';
@@ -633,7 +922,7 @@
       return;
     }
 
-    if (fighter.face === 'sleepy') {
+    if (fighter.personality === 'sleepy') {
       ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
       ctx.beginPath();
       ctx.ellipse(-eyeDX, eyeY, eyeW * 0.55, eyeH * 0.45, 0, Math.PI, Math.PI * 2);
@@ -651,7 +940,7 @@
       return;
     }
 
-    if (fighter.face === 'sassy') {
+    if (fighter.personality === 'sassy') {
       ctx.strokeStyle = '#29354d';
       ctx.lineWidth = Math.max(1.1, size * 0.04);
       ctx.beginPath();
@@ -666,7 +955,7 @@
       return;
     }
 
-    if (fighter.face === 'starry') {
+    if (fighter.personality === 'starry') {
       ctx.fillStyle = '#fff7ce';
       drawStar(-eyeDX, eyeY, size * 0.105, size * 0.05, 5);
       drawStar(eyeDX, eyeY, size * 0.105, size * 0.05, 5);
@@ -676,7 +965,7 @@
       return;
     }
 
-    if (fighter.face === 'goofy') {
+    if (fighter.personality === 'goofy') {
       drawEye(-eyeDX - size * 0.015, eyeY, eyeW * 0.85, eyeH * 1.1, pupilX, pupilY);
       drawEye(eyeDX + size * 0.018, eyeY - size * 0.025, eyeW * 1.1, eyeH * 0.9, pupilX, pupilY);
       ctx.fillStyle = '#26324b';
@@ -704,11 +993,6 @@
       drawEye(eyeDX, eyeY, eyeW, eyeH, pupilX, pupilY);
     }
     drawSmile(size);
-    if (fighter.face === 'goofy') {
-      ctx.fillStyle = '#ff829d';
-      roundedRect(size * 0.04, size * 0.2, size * 0.08, size * 0.07, size * 0.03);
-      ctx.fill();
-    }
   }
 
   function drawFighter(fighter, time) {
@@ -723,7 +1007,6 @@
       : 'idle';
 
     drawBackgroundAura(fighter, time);
-
     ctx.save();
     ctx.globalAlpha = 0.28;
     ctx.fillStyle = '#030817';
@@ -756,16 +1039,16 @@
     ctx.globalAlpha = 1;
 
     if (mood === 'wall') drawSurprisedFace(size, lookX, lookY);
-    else if (mood === 'bump') drawBumpedFace(size);
+    else if (mood === 'bump' || mood === 'obstacle') drawBumpedFace(size);
     else if (mood === 'dizzy') drawDizzyFace(size, time);
-    else drawPersonalityFace(fighter, size, lookX, lookY, time);
+    else drawPersonalityFace(fighter, size, lookX, lookY);
 
-    if (mood === 'wall') {
-      ctx.fillStyle = 'rgba(255,255,255,.9)';
+    if (mood === 'wall' || mood === 'obstacle') {
+      ctx.fillStyle = 'rgba(255,255,255,.92)';
       ctx.font = `800 ${Math.max(7, size * 0.2)}px system-ui`;
-      ctx.fillText('!', half * 0.68, -half * 0.57);
+      ctx.fillText(mood === 'wall' ? '!' : '✦', half * 0.68, -half * 0.57);
     } else if (mood === 'bump') {
-      ctx.fillStyle = 'rgba(255,255,255,.9)';
+      ctx.fillStyle = 'rgba(255,255,255,.92)';
       ctx.font = `800 ${Math.max(6, size * 0.16)}px system-ui`;
       ctx.fillText('✦', half * 0.7, -half * 0.55);
     }
@@ -784,19 +1067,37 @@
   }
 
   function render(time) {
-    if (!world || !match) return;
-    drawArena();
-    drawEffects();
-    match.fighters.forEach((fighter) => drawFighter(fighter, time));
+    if (!world || !match || renderFailed) return;
+    try {
+      drawArena();
+      drawObstacles(time);
+      drawEffects();
+      match.fighters.forEach((fighter) => drawFighter(fighter, time));
+      ITEM_SYSTEM_API.render(match);
+      hasRendered = true;
+      if (canvasFallback) canvasFallback.hidden = true;
+    } catch (error) {
+      renderFailed = true;
+      if (canvasFallback) canvasFallback.hidden = false;
+      if (fallbackMessage) fallbackMessage.textContent = '画布显示遇到问题，方块们先在这里等一等';
+      console.error('Block Bounce canvas rendering failed:', error);
+    }
   }
 
   function frame(time) {
-    if (!match) return;
+    if (!match) {
+      applyCanvasSize();
+      if (world) startMatch(activeConfig);
+      if (!match) {
+        animationFrame = requestFrame(frame);
+        return;
+      }
+    }
     const dt = previousTime ? Math.min((time - previousTime) / 1000, 0.033) : 0;
     previousTime = time;
     update(dt);
     render(time);
-    animationFrame = window.requestAnimationFrame(frame);
+    animationFrame = requestFrame(frame);
   }
 
   function setPaused(paused) {
@@ -820,34 +1121,130 @@
     }
   }
 
+  function addFormInputSync(range, number, output, min, max) {
+    const fromRange = () => {
+      number.value = range.value;
+      output.value = range.value;
+      output.textContent = range.value;
+    };
+    const fromNumber = () => {
+      if (number.value === '') return;
+      const value = clampInteger(number.value, min, max, Number(range.value));
+      number.value = String(value);
+      range.value = String(value);
+      output.value = String(value);
+      output.textContent = String(value);
+    };
+    range.addEventListener('input', fromRange);
+    number.addEventListener('input', fromNumber);
+    number.addEventListener('change', fromNumber);
+  }
+
+  function readFormConfig() {
+    return normalizeMatchConfig({
+      blockCount: blockCountNumber.value,
+      obstacleCount: obstacleCountNumber.value,
+    }, activeConfig);
+  }
+
+  function writeFormConfig(config) {
+    blockCountRange.value = String(config.blockCount);
+    blockCountNumber.value = String(config.blockCount);
+    blockCountOutput.value = String(config.blockCount);
+    blockCountOutput.textContent = String(config.blockCount);
+    obstacleCountRange.value = String(config.obstacleCount);
+    obstacleCountNumber.value = String(config.obstacleCount);
+    obstacleCountOutput.value = String(config.obstacleCount);
+    obstacleCountOutput.textContent = String(config.obstacleCount);
+  }
+
+  addFormInputSync(blockCountRange, blockCountNumber, blockCountOutput, MATCH_LIMITS.blockCount.min, MATCH_LIMITS.blockCount.max);
+  addFormInputSync(obstacleCountRange, obstacleCountNumber, obstacleCountOutput, MATCH_LIMITS.obstacleCount.min, MATCH_LIMITS.obstacleCount.max);
+  applySettingsButton.addEventListener('click', () => startMatch(readFormConfig()));
+  defaultSettingsButton.addEventListener('click', () => {
+    writeFormConfig(DEFAULT_MATCH_CONFIG);
+    startMatch(DEFAULT_MATCH_CONFIG);
+  });
   pauseButton.addEventListener('click', () => setPaused(!match?.paused));
-  restartButton.addEventListener('click', startMatch);
+  restartButton.addEventListener('click', () => startMatch());
+
+  function getMatchSnapshot() {
+    if (!match) return null;
+    return {
+      id: match.id,
+      config: { ...match.config },
+      counters: {
+        collisions: match.collisions,
+        wallHits: match.wallHits,
+        blockHits: match.blockHits,
+        obstacleHits: match.obstacleHits,
+      },
+      blocks: match.fighters.map((fighter) => ({
+        id: fighter.id,
+        name: fighter.name,
+        color: fighter.color,
+        x: fighter.x,
+        y: fighter.y,
+        face: fighter.faceMood,
+      })),
+      obstacles: match.obstacles.map((obstacle) => ({ ...obstacle })),
+      paused: match.paused,
+    };
+  }
+
+  const obstacleSystemAPI = Object.freeze({
+    id: 'obstacles',
+    create: createObstacles,
+    getCurrent: () => (match ? match.obstacles.map((obstacle) => ({ ...obstacle })) : []),
+  });
+
+  window.BlockBounce = Object.freeze({
+    version: '0.3.0',
+    defaults: DEFAULT_MATCH_CONFIG,
+    limits: MATCH_LIMITS,
+    normalizeConfig: normalizeMatchConfig,
+    createUniqueColors,
+    startMatch: (config) => startMatch(config || null),
+    getConfig: () => ({ ...activeConfig }),
+    getSnapshot: getMatchSnapshot,
+    systems: {
+      obstacles: obstacleSystemAPI,
+      items: ITEM_SYSTEM_API,
+    },
+  });
 
   function requestResize() {
-    if (resizeFrame) cancelAnimationFrame(resizeFrame);
-    resizeFrame = requestAnimationFrame(() => {
+    if (resizeFrame) cancelFrame(resizeFrame);
+    resizeFrame = requestFrame(() => {
       resizeFrame = 0;
       applyCanvasSize();
     });
   }
 
-  if ('ResizeObserver' in window) {
-    resizeObserver = new ResizeObserver(requestResize);
+  if (typeof window.ResizeObserver === 'function') {
+    resizeObserver = new window.ResizeObserver(requestResize);
     resizeObserver.observe(arenaShell);
   } else {
     window.addEventListener('resize', requestResize);
   }
 
+  window.addEventListener('error', () => {
+    if (!hasRendered && canvasFallback && fallbackMessage) {
+      canvasFallback.hidden = false;
+      fallbackMessage.textContent = '方块们先在这里等一等，点“再来一局”重试';
+    }
+  });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden && match && !match.paused) setPaused(true);
   });
   window.addEventListener('pagehide', () => {
-    if (animationFrame) window.cancelAnimationFrame(animationFrame);
+    if (animationFrame) cancelFrame(animationFrame);
     if (resizeObserver) resizeObserver.disconnect();
   });
 
+  writeFormConfig(DEFAULT_MATCH_CONFIG);
   applyCanvasSize();
-  startMatch();
+  startMatch(DEFAULT_MATCH_CONFIG);
   previousTime = performance.now();
-  animationFrame = window.requestAnimationFrame(frame);
+  animationFrame = requestFrame(frame);
 })();
