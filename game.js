@@ -31,25 +31,101 @@
   const wallCount = document.getElementById('wallCount');
   const blockCount = document.getElementById('blockCount');
   const obstacleHitCount = document.getElementById('obstacleHitCount');
+  const aliveCount = document.getElementById('aliveCount');
+  const itemStatus = document.getElementById('itemStatus');
   const eventFeed = document.getElementById('eventFeed');
   const blockCountRange = document.getElementById('blockCountRange');
   const blockCountNumber = document.getElementById('blockCountNumber');
   const blockCountOutput = document.getElementById('blockCountOutput');
+  const blockHealthRange = document.getElementById('blockHealthRange');
+  const blockHealthNumber = document.getElementById('blockHealthNumber');
+  const blockHealthOutput = document.getElementById('blockHealthOutput');
   const obstacleCountRange = document.getElementById('obstacleCountRange');
   const obstacleCountNumber = document.getElementById('obstacleCountNumber');
   const obstacleCountOutput = document.getElementById('obstacleCountOutput');
   const applySettingsButton = document.getElementById('applySettingsButton');
   const defaultSettingsButton = document.getElementById('defaultSettingsButton');
+  const mapTypeSelect = document.getElementById('mapTypeSelect');
+  const mapDescription = document.getElementById('mapDescription');
+  const obstacleControl = document.querySelector('.obstacle-control');
+  const collisionAccelerationToggle = document.getElementById('collisionAccelerationToggle');
+
+  // Per-60fps-tick surface drag; the ice map's very low value preserves long slides.
+  const MAP_DEFINITIONS = Object.freeze({
+    empty: {
+      label: '空白竞技场', status: '空白场 · 玩耍', description: '纯网格空场，没有障碍物，适合观察弹跳。',
+      base: '#10182b', glowA: 'rgba(75, 112, 176, 0.22)', glowB: 'rgba(111, 78, 155, 0.19)',
+      grid: 'rgba(186, 207, 248, 0.115)', borderGlow: 'rgba(219, 232, 255, 0.92)',
+      friction: 0.00025, obstacleKinds: [], defaultObstacleCount: 0, radiationPits: 0,
+    },
+    forest: {
+      label: '森林', status: '森林 · 弹跳中', description: '林地里分布着树木和岩石，它们会挡住方块并让它们弹开。',
+      base: '#10251f', glowA: 'rgba(57, 138, 93, 0.26)', glowB: 'rgba(33, 89, 63, 0.2)',
+      grid: 'rgba(173, 235, 190, 0.12)', borderGlow: 'rgba(203, 255, 215, 0.9)',
+      friction: 0.00045, obstacleKinds: ['tree', 'rock'], defaultObstacleCount: 4, radiationPits: 0,
+    },
+    desert: {
+      label: '沙漠', status: '沙漠 · 弹跳中', description: '暖色沙地，仙人掌可以撞坏；接触时每秒最多扣 2 HP。',
+      base: '#352516', glowA: 'rgba(222, 156, 62, 0.22)', glowB: 'rgba(154, 89, 34, 0.2)',
+      grid: 'rgba(255, 223, 162, 0.13)', borderGlow: 'rgba(255, 236, 198, 0.94)',
+      friction: 0.00035, obstacleKinds: ['cactus'], defaultObstacleCount: 4, radiationPits: 0,
+    },
+    ice: {
+      label: '冰原', status: '冰原 · 滑行中', description: '整片海面都是冰，摩擦很小，碰撞后会滑得更远。',
+      base: '#102a3a', glowA: 'rgba(76, 185, 228, 0.24)', glowB: 'rgba(88, 134, 203, 0.18)',
+      grid: 'rgba(206, 244, 255, 0.16)', borderGlow: 'rgba(221, 250, 255, 0.98)',
+      friction: 0.000025, obstacleKinds: [], defaultObstacleCount: 0, radiationPits: 0,
+    },
+    nuclear: {
+      label: '核辐射区', status: '辐射区 · 弹跳中', description: '树木与荧光辐射坑；坑内每秒扣 2 HP，移速减半。',
+      base: '#14251b', glowA: 'rgba(150, 211, 64, 0.22)', glowB: 'rgba(60, 122, 47, 0.19)',
+      grid: 'rgba(210, 255, 131, 0.14)', borderGlow: 'rgba(231, 255, 180, 0.92)',
+      friction: 0.00045, obstacleKinds: ['tree'], defaultObstacleCount: 4, radiationPits: 5,
+    },
+  });
 
   const DEFAULT_MATCH_CONFIG = Object.freeze({
     blockCount: 8,
-    obstacleCount: 4,
-    itemsEnabled: false,
+    blockHealth: 1000,
+    obstacleCount: 0,
+    mapType: 'empty',
+    collisionAcceleration: false,
+    itemsEnabled: true,
   });
   const MATCH_LIMITS = Object.freeze({
     blockCount: Object.freeze({ min: 1, max: 48 }),
+    blockHealth: Object.freeze({ min: 1, max: 10000 }),
     obstacleCount: Object.freeze({ min: 0, max: 12 }),
   });
+  const ITEM_RULES = Object.freeze({
+    maxOnField: 2,
+    globalUseCooldown: 6,
+    knifeDamage: 5,
+    pistolDamage: 10,
+    shotgunPelletDamage: 10,
+    sniperDamage: 20,
+    refillInterval: 6,
+    c4Damage: 20,
+    c4RadiusCells: 2,
+    c4FuseSeconds: 5,
+    flamethrowerDamagePerSecond: 2,
+    flamethrowerDuration: 5,
+    flamethrowerRangeCells: 3.6,
+    flamethrowerHalfAngle: 0.34,
+    shotgunPellets: 3,
+    mediumBulletCellsPerSecond: 7,
+    sniperBulletCellsPerSecond: 18,
+    projectileLifetime: 5,
+  });
+  const ITEM_DEFINITIONS = Object.freeze({
+    knife: Object.freeze({ name: '刀', shortName: '刀', icon: '⚔', color: '#ff7184', group: 'contact' }),
+    pistol: Object.freeze({ name: '手枪', shortName: '手枪', icon: '●', color: '#6ec7ff', group: 'ranged' }),
+    shotgun: Object.freeze({ name: '霰弹枪', shortName: '霰弹', icon: '✹', color: '#ffd166', group: 'ranged' }),
+    sniper: Object.freeze({ name: '狙击枪', shortName: '狙击', icon: '◎', color: '#b69aff', group: 'ranged' }),
+    flamethrower: Object.freeze({ name: '喷火器', shortName: '喷火', icon: '♨', color: '#ff895f', group: 'ranged' }),
+    c4: Object.freeze({ name: 'C4', shortName: 'C4', icon: 'C4', color: '#67d6a9', group: 'contact' }),
+  });
+  const ITEM_TYPES = Object.keys(ITEM_DEFINITIONS);
   const BORDER = 7;
   const NAMES = ['泡泡', '豆豆', '烈烈', '团子', '露露', '薄荷', '咕噜', '柚子', '跳跳', '米粒', '布丁', '云朵'];
   const PERSONALITIES = ['smile', 'goofy', 'sassy', 'sleepy', 'starry', 'wink'];
@@ -62,20 +138,21 @@
     wink: '偷偷眨眼',
   };
 
-  // Future item-system contract only. Items are deliberately not implemented or enabled yet.
   const ITEM_SYSTEM_API = {
     id: 'items',
-    enabled: false,
-    initialize(_context) {},
-    update(_deltaTime, _context) {},
-    render(_context) {},
-    onCollision(_event, _context) {},
-    dispose() {},
+    enabled: true,
+    initialize: initializeItemSystem,
+    update: updateItemSystem,
+    render: renderItemSystem,
+    onCollision: handleItemCollision,
+    dispose: disposeItemSystem,
+    getCurrent: getItemSystemSnapshot,
   };
 
   let world = null;
   let match = null;
   let activeConfig = DEFAULT_MATCH_CONFIG;
+  let formMapType = DEFAULT_MATCH_CONFIG.mapType;
   let animationFrame = 0;
   let previousTime = 0;
   let lastHudTime = 0;
@@ -101,11 +178,31 @@
   function normalizeMatchConfig(overrides = {}, base = activeConfig || DEFAULT_MATCH_CONFIG) {
     const input = overrides && typeof overrides === 'object' ? overrides : {};
     const defaults = base && typeof base === 'object' ? base : DEFAULT_MATCH_CONFIG;
+    const fallbackMapType = Object.hasOwn(MAP_DEFINITIONS, defaults.mapType) ? defaults.mapType : DEFAULT_MATCH_CONFIG.mapType;
+    const mapType = Object.hasOwn(MAP_DEFINITIONS, input.mapType) ? input.mapType : fallbackMapType;
+    const map = MAP_DEFINITIONS[mapType];
+    let obstacleFallback = defaults.obstacleCount;
+    if (input.mapType !== undefined && mapType !== defaults.mapType && input.obstacleCount === undefined) {
+      obstacleFallback = map.defaultObstacleCount;
+    }
+    const obstacleCount = map.obstacleKinds.length
+      ? clampInteger(input.obstacleCount, MATCH_LIMITS.obstacleCount.min, MATCH_LIMITS.obstacleCount.max, obstacleFallback)
+      : 0;
+    const fallbackBlockHealth = clampInteger(
+      defaults.blockHealth,
+      MATCH_LIMITS.blockHealth.min,
+      MATCH_LIMITS.blockHealth.max,
+      DEFAULT_MATCH_CONFIG.blockHealth,
+    );
     return Object.freeze({
       blockCount: clampInteger(input.blockCount, MATCH_LIMITS.blockCount.min, MATCH_LIMITS.blockCount.max, defaults.blockCount),
-      obstacleCount: clampInteger(input.obstacleCount, MATCH_LIMITS.obstacleCount.min, MATCH_LIMITS.obstacleCount.max, defaults.obstacleCount),
-      // Reserving the property now keeps future saved match configs forward-compatible.
-      itemsEnabled: false,
+      blockHealth: clampInteger(input.blockHealth, MATCH_LIMITS.blockHealth.min, MATCH_LIMITS.blockHealth.max, fallbackBlockHealth),
+      obstacleCount,
+      mapType,
+      collisionAcceleration: typeof input.collisionAcceleration === 'boolean'
+        ? input.collisionAcceleration
+        : Boolean(defaults.collisionAcceleration),
+      itemsEnabled: true,
     });
   }
 
@@ -159,9 +256,12 @@
       fighter.size = blockSizeForCount(match.config.blockCount);
       keepInside(fighter, false);
     });
-    match.obstacles = createObstacles(match.config.obstacleCount);
+    rebuildObstaclesForResize();
+    match.radiationPits = createRadiationPits(match.config.mapType);
     for (let pass = 0; pass < 3; pass += 1) {
-      match.fighters.forEach((fighter) => resolveObstacleCollisions(fighter, false));
+      match.fighters.forEach((fighter) => {
+        if (!fighter.eliminated) resolveObstacleCollisions(fighter, false);
+      });
       resolveBlockCollisions(false);
     }
     render(performance.now());
@@ -203,32 +303,70 @@
     return result;
   }
 
-  function createObstacles(count) {
+  function createObstacles(count, mapType = activeConfig.mapType) {
     const safeCount = clampInteger(count, 0, MATCH_LIMITS.obstacleCount.max, 0);
-    if (!world || safeCount <= 0) return [];
+    const map = Object.hasOwn(MAP_DEFINITIONS, mapType) ? MAP_DEFINITIONS[mapType] : MAP_DEFINITIONS.empty;
+    if (!world || safeCount <= 0 || map.obstacleKinds.length === 0) return [];
     const columns = Math.max(1, Math.ceil(Math.sqrt(safeCount * (world.width / world.height))));
     const rows = Math.ceil(safeCount / columns);
     const marginX = world.width * 0.1;
     const marginY = world.height * 0.11;
     const spacingX = (world.width - marginX * 2) / (columns + 1);
     const spacingY = (world.height - marginY * 2) / (rows + 1);
-    const obstacleWidth = Math.max(18, Math.min(world.cell * 1.28, spacingX * 0.58));
-    const obstacleHeight = Math.max(12, Math.min(world.cell * 0.72, spacingY * 0.44));
     const obstacles = [];
 
     for (let index = 0; index < safeCount; index += 1) {
       const column = index % columns;
       const row = Math.floor(index / columns);
+      const kind = map.obstacleKinds[index % map.obstacleKinds.length];
+      const durability = { tree: 100, rock: 1000, cactus: 100 }[kind] || 100;
+      const sizeByKind = {
+        tree: { width: world.cell * 0.96, height: world.cell * 0.94 },
+        rock: { width: world.cell * 0.92, height: world.cell * 0.68 },
+        cactus: { width: world.cell * 0.62, height: world.cell * 1.18 },
+      }[kind] || { width: world.cell, height: world.cell * 0.75 };
       obstacles.push({
         id: `obstacle-${index + 1}`,
+        kind,
         x: marginX + spacingX * (column + 1),
         y: marginY + spacingY * (row + 1),
-        width: obstacleWidth,
-        height: obstacleHeight,
-        accent: index % 2 === 0 ? '#a9c2e8' : '#c3b4e8',
+        width: Math.max(15, Math.min(sizeByKind.width, spacingX * 0.58)),
+        height: Math.max(13, Math.min(sizeByKind.height, spacingY * 0.45)),
+        accent: mapType === 'nuclear' ? '#a9e658' : (kind === 'cactus' ? '#87d57a' : '#a9c2e8'),
+        health: durability,
+        maxHealth: durability,
+        variant: index % 3,
       });
     }
     return obstacles;
+  }
+
+  function rebuildObstaclesForResize() {
+    if (!match) return;
+    const previousById = new Map(match.obstacles.map((obstacle) => [obstacle.id, obstacle]));
+    match.obstacles = createObstacles(match.config.obstacleCount, match.config.mapType)
+      .filter((obstacle) => !match.destroyedObstacleIds.has(obstacle.id))
+      .map((obstacle) => {
+        const previous = previousById.get(obstacle.id);
+        if (previous) obstacle.health = previous.health;
+        return obstacle;
+      });
+  }
+
+  function createRadiationPits(mapType = activeConfig.mapType) {
+    if (!world || mapType !== 'nuclear') return [];
+    const points = [
+      [0.22, 0.27], [0.5, 0.22], [0.78, 0.3], [0.31, 0.57],
+      [0.69, 0.58], [0.48, 0.82], [0.82, 0.8],
+    ];
+    return points.slice(0, MAP_DEFINITIONS.nuclear.radiationPits).map(([px, py], index) => ({
+      id: `radiation-pit-${index + 1}`,
+      x: world.width * px,
+      y: world.height * py,
+      width: world.cell * 2.05,
+      height: world.cell * 1.38,
+      phase: index * 1.17,
+    }));
   }
 
   function obstacleOverlaps(x, y, size, obstacle, padding = 0) {
@@ -248,9 +386,10 @@
       const x = minX + Math.random() * Math.max(1, maxX - minX);
       const y = minY + Math.random() * Math.max(1, maxY - minY);
       const touchesObstacle = match.obstacles.some((obstacle) => obstacleOverlaps(x, y, size, obstacle, 5));
+      const touchesRadiation = match.radiationPits.some((pit) => obstacleOverlaps(x, y, size, pit, 0));
       const touchesBlock = placed.some((other) => Math.abs(x - other.x) < (size + other.size) * 0.62
         && Math.abs(y - other.y) < (size + other.size) * 0.62);
-      if (!touchesObstacle && !touchesBlock) return { x, y };
+      if (!touchesObstacle && !touchesRadiation && !touchesBlock) return { x, y };
     }
 
     // Dense custom matches still start safely inside the field; physics separates any close neighbors.
@@ -281,9 +420,17 @@
       idle: PERSONALITY_LABELS[PERSONALITIES[index % PERSONALITIES.length]],
       x: position.x,
       y: position.y,
+      previousX: position.x,
+      previousY: position.y,
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
       size,
+      maxHealth: match.config.blockHealth,
+      health: match.config.blockHealth,
+      eliminated: false,
+      radiationTimers: new Map(),
+      heldItems: [],
+      lastDamage: 0,
       angle,
       faceMood: 'idle',
       moodUntil: 0,
@@ -301,7 +448,7 @@
       chip.className = 'roster-chip';
       chip.dataset.character = fighter.id;
       chip.style.setProperty('--character-color', fighter.color);
-      chip.setAttribute('aria-label', `${fighter.name}，${fighter.idle}`);
+      chip.setAttribute('aria-label', `${fighter.name}，${fighter.idle}，${fighter.health} HP`);
 
       const swatch = document.createElement('span');
       swatch.className = 'roster-swatch';
@@ -311,8 +458,23 @@
       const name = document.createElement('strong');
       name.textContent = fighter.name;
       const mood = document.createElement('small');
+      mood.className = 'roster-mood';
       mood.textContent = fighter.idle;
-      copy.append(name, mood);
+      const healthRow = document.createElement('span');
+      healthRow.className = 'roster-health-row';
+      const healthValue = document.createElement('small');
+      healthValue.className = 'roster-health-value';
+      healthValue.textContent = `${fighter.health} HP`;
+      const healthTrack = document.createElement('span');
+      healthTrack.className = 'roster-health-track';
+      const healthFill = document.createElement('i');
+      healthFill.className = 'roster-health-fill';
+      healthTrack.append(healthFill);
+      healthRow.append(healthValue, healthTrack);
+      const heldItems = document.createElement('small');
+      heldItems.className = 'roster-items';
+      heldItems.textContent = '手持 —';
+      copy.append(name, mood, healthRow, heldItems);
       chip.append(swatch, copy);
       roster.append(chip);
     });
@@ -347,15 +509,34 @@
       id: `match-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
       config: matchConfig,
       fighters: [],
-      obstacles: createObstacles(matchConfig.obstacleCount),
+      obstacles: createObstacles(matchConfig.obstacleCount, matchConfig.mapType),
+      radiationPits: createRadiationPits(matchConfig.mapType),
+      destroyedObstacleIds: new Set(),
       pairCooldowns: new Map(),
       obstacleCooldowns: new Map(),
+      cactusDamageCooldowns: new Map(),
       effects: [],
       collisions: 0,
       wallHits: 0,
       blockHits: 0,
       obstacleHits: 0,
+      obstaclesDestroyed: 0,
+      eliminations: 0,
+      items: [],
+      projectiles: [],
+      flames: [],
+      c4Charges: [],
+      itemEffects: [],
+      hostilityScores: new Map(),
+      simulationTime: 0,
+      nextItemId: 1,
+      itemSpawnCooldown: 0,
+      itemUseReadyAt: 0,
+      itemUses: 0,
+      projectileHits: 0,
+      c4Detonations: 0,
       paused: false,
+      ended: false,
       lastToastAt: -Infinity,
       lastEventAt: -Infinity,
     };
@@ -366,11 +547,12 @@
       match.fighters.push(fighter);
     });
 
+    writeFormConfig(matchConfig);
     pauseButton.disabled = false;
     pauseButton.querySelector('span').textContent = '暂停';
     pauseButton.setAttribute('aria-label', '暂停弹跳');
     matchState.className = 'match-state';
-    matchState.querySelector('span').textContent = '正在玩耍';
+    matchState.querySelector('span').textContent = MAP_DEFINITIONS[matchConfig.mapType].status;
     overlay.hidden = true;
     collisionToast.hidden = true;
     window.clearTimeout(toastTimer);
@@ -396,8 +578,10 @@
   }
 
   function moodLabel(fighter, now) {
+    if (fighter.eliminated) return '淘汰';
     if (fighter.faceMood !== 'idle' && now < fighter.moodUntil) {
       if (fighter.faceMood === 'wall') return '撞墙惊讶';
+      if (fighter.faceMood === 'hurt') return '受伤啦';
       if (fighter.faceMood === 'bump') return '碰到伙伴';
       if (fighter.faceMood === 'obstacle') return '撞到障碍';
       if (fighter.faceMood === 'dizzy') return '晕乎乎';
@@ -412,15 +596,56 @@
       const chip = roster.querySelector(`[data-character="${fighter.id}"]`);
       if (!chip) return;
       const label = moodLabel(fighter, now);
-      const moodElement = chip.querySelector('small');
-      if (moodElement.textContent !== label) moodElement.textContent = label;
+      const moodElement = chip.querySelector('.roster-mood');
+      const healthValue = chip.querySelector('.roster-health-value');
+      const healthFill = chip.querySelector('.roster-health-fill');
+      const heldItemsElement = chip.querySelector('.roster-items');
+      const heldItemNames = fighter.heldItems.map((item) => ITEM_DEFINITIONS[item.type]?.shortName || item.type);
+      const heldItemsLabel = heldItemNames.length ? heldItemNames.join('、') : '—';
+      const ratio = fighter.maxHealth > 0 ? Math.max(0, fighter.health / fighter.maxHealth) : 0;
+      if (moodElement && moodElement.textContent !== label) moodElement.textContent = label;
+      if (healthValue) healthValue.textContent = `${Math.ceil(fighter.health)} HP`;
+      if (healthFill) healthFill.style.width = `${ratio * 100}%`;
+      if (heldItemsElement) heldItemsElement.textContent = `手持 ${heldItemsLabel}`;
       chip.classList.toggle('is-reacting', fighter.faceMood !== 'idle' && now < fighter.moodUntil);
-      chip.setAttribute('aria-label', `${fighter.name}，${label}`);
+      chip.classList.toggle('is-critical', !fighter.eliminated && ratio <= 0.25);
+      chip.classList.toggle('is-eliminated', fighter.eliminated);
+      chip.setAttribute('aria-label', `${fighter.name}，${label}，${Math.ceil(fighter.health)} / ${fighter.maxHealth} HP，手持道具 ${heldItemsLabel}`);
     });
+    const livingCount = match.fighters.filter((fighter) => !fighter.eliminated).length;
+    aliveCount.textContent = String(livingCount);
+    if (!match.paused && !match.ended && livingCount === 1) {
+      const survivor = match.fighters.find((fighter) => !fighter.eliminated);
+      matchState.querySelector('span').textContent = survivor ? `${survivor.name} · 最后一位` : '对局结束';
+    } else if (!match.paused && !match.ended) {
+      matchState.querySelector('span').textContent = MAP_DEFINITIONS[match.config.mapType].status;
+    }
     collisionCount.textContent = String(match.collisions);
     wallCount.textContent = String(match.wallHits);
     blockCount.textContent = String(match.blockHits);
     obstacleHitCount.textContent = String(match.obstacleHits);
+    syncItemHud();
+  }
+
+  function heldItemCount() {
+    return match ? match.fighters.reduce((total, fighter) => total + fighter.heldItems.length, 0) : 0;
+  }
+
+  function totalItemCount() {
+    return match ? match.items.length + heldItemCount() : 0;
+  }
+
+  function itemCooldownRemaining() {
+    return match ? Math.max(0, match.itemUseReadyAt - match.simulationTime) : 0;
+  }
+
+  function syncItemHud() {
+    if (!itemStatus || !match) return;
+    const cooldown = itemCooldownRemaining();
+    const cooldownText = cooldown > 0.04 ? `全局冷却 ${Math.ceil(cooldown)} 秒` : '自动使用就绪';
+    const statusText = `道具 ${totalItemCount()}/${ITEM_RULES.maxOnField} · ${cooldownText}`;
+    if (itemStatus.textContent !== statusText) itemStatus.textContent = statusText;
+    itemStatus.classList.toggle('is-cooling', cooldown > 0.04);
   }
 
   function nearestWallBounds(fighter) {
@@ -461,10 +686,22 @@
     keepInside(fighter, true);
   }
 
+  function boostAfterCollision(fighter, collisionType) {
+    if (!match.config.collisionAcceleration) return;
+    const factor = collisionType === 'block' ? 1.085 : (collisionType === 'obstacle' ? 1.065 : 1.045);
+    const speed = Math.hypot(fighter.vx, fighter.vy);
+    if (speed <= 0) return;
+    const maximum = world.cell * (match.config.blockCount > 24 ? 4.8 : 5.5);
+    const scale = Math.min(factor, maximum / speed);
+    fighter.vx *= scale;
+    fighter.vy *= scale;
+  }
+
   function registerWallCollision(fighter, hitX, hitY) {
     match.collisions += 1;
     match.wallHits += 1;
     setMood(fighter, 'wall', 680);
+    boostAfterCollision(fighter, 'wall');
     const x = hitX ? Math.max(world.border + 4, Math.min(world.width - world.border - 4, fighter.x)) : fighter.x;
     const y = hitY ? Math.max(world.border + 4, Math.min(world.height - world.border - 4, fighter.y)) : fighter.y;
     addBurst(x, y, [fighter.color, fighter.light, '#ffffff'], 7);
@@ -491,11 +728,13 @@
   }
 
   function resolveObstacleCollision(fighter, obstacle, countHit) {
+    if (fighter.eliminated || obstacle.destroyed) return false;
     const overlapX = fighter.size / 2 + obstacle.width / 2 - Math.abs(fighter.x - obstacle.x);
     const overlapY = fighter.size / 2 + obstacle.height / 2 - Math.abs(fighter.y - obstacle.y);
     if (overlapX <= 0 || overlapY <= 0) return false;
 
     const normal = obstacleNormal(fighter, obstacle, overlapX, overlapY);
+    const impactSpeed = Math.abs(normal.axis === 'x' ? fighter.vx : fighter.vy);
     const incoming = normal.axis === 'x' ? fighter.vx * normal.sign < 0 : fighter.vy * normal.sign < 0;
     const overlap = (normal.axis === 'x' ? overlapX : overlapY) + 0.15;
     if (normal.axis === 'x') {
@@ -508,26 +747,121 @@
 
     const cooldownKey = `${fighter.id}:${obstacle.id}`;
     if (countHit && incoming && (match.obstacleCooldowns.get(cooldownKey) || 0) <= 0) {
-      registerObstacleCollision(fighter, obstacle, cooldownKey);
+      registerObstacleCollision(fighter, obstacle, cooldownKey, impactSpeed);
     }
     keepInside(fighter, countHit);
     return true;
   }
 
   function resolveObstacleCollisions(fighter, countHit) {
-    if (!match.obstacles.length) return;
+    if (fighter.eliminated || !match.obstacles.length) return;
     match.obstacles.forEach((obstacle) => resolveObstacleCollision(fighter, obstacle, countHit));
   }
 
-  function registerObstacleCollision(fighter, obstacle, cooldownKey) {
+  function obstacleName(kind) {
+    return ({ tree: '树木', rock: '石头', cactus: '仙人掌' })[kind] || '障碍物';
+  }
+
+  function damageObstacle(obstacle, impactSpeed) {
+    const damage = Math.max(1, Math.round((impactSpeed / Math.max(1, world.cell)) * 10));
+    obstacle.health = Math.max(0, obstacle.health - damage);
+    const destroyed = obstacle.health <= 0;
+    if (destroyed) {
+      obstacle.destroyed = true;
+      match.destroyedObstacleIds.add(obstacle.id);
+      match.obstaclesDestroyed += 1;
+      addBurst(obstacle.x, obstacle.y, [obstacle.accent, '#c8ff72', '#ffffff'], 15);
+    }
+    return { damage, destroyed };
+  }
+
+  function recordHostility(victim, attacker, amount = 1) {
+    if (!match || !victim || !attacker || victim.id === attacker.id || amount <= 0) return;
+    const key = `${victim.id}:${attacker.id}`;
+    const previous = match.hostilityScores.get(key);
+    const age = previous ? Math.max(0, match.simulationTime - previous.time) : 0;
+    const score = previous ? previous.score * Math.exp(-age / 8) : 0;
+    match.hostilityScores.set(key, { score: score + amount, time: match.simulationTime });
+  }
+
+  function hostilityToward(victim, attacker) {
+    if (!match || !victim || !attacker) return 0;
+    const entry = match.hostilityScores.get(`${victim.id}:${attacker.id}`);
+    if (!entry) return 0;
+    return entry.score * Math.exp(-Math.max(0, match.simulationTime - entry.time) / 8);
+  }
+
+  function applyDamage(fighter, amount, source, announce = true, attackerId = null) {
+    if (!fighter || fighter.eliminated || amount <= 0) return 0;
+    const damage = Math.max(1, Math.round(amount));
+    const attacker = attackerId ? match.fighters.find((item) => item.id === attackerId) : null;
+    if (attacker) recordHostility(fighter, attacker, Math.max(1, damage / 5));
+    fighter.lastDamage = damage;
+    fighter.health = Math.max(0, fighter.health - damage);
+    if (fighter.health <= 0) {
+      eliminateFighter(fighter, source);
+      return damage;
+    }
+    setMood(fighter, 'hurt', 700);
+    addBurst(fighter.x, fighter.y, [fighter.color, '#ff8190', '#ffffff'], 4);
+    if (announce) {
+      const sourceLabel = ({
+        radiation: '辐射坑', cactus: '仙人掌', knife: '刀', pistol: '手枪',
+        shotgun: '霰弹枪', sniper: '狙击枪', flamethrower: '喷火器', c4: 'C4 爆炸',
+      })[source] || '对手';
+      addEvent(`${fighter.name} 受到${sourceLabel}伤害 -${damage} HP`, '#ff8292');
+    }
+    return damage;
+  }
+
+  function eliminateFighter(fighter, source) {
+    if (fighter.eliminated) return;
+    fighter.health = 0;
+    fighter.eliminated = true;
+    dropHeldItems(fighter);
+    fighter.faceMood = 'idle';
+    match.eliminations += 1;
+    addBurst(fighter.x, fighter.y, [fighter.color, '#ffffff', '#ff7184'], 18);
+    addEvent(`${fighter.name} 血量耗尽，淘汰出局`, fighter.color);
+    const livingCount = match.fighters.filter((item) => !item.eliminated).length;
+    if (livingCount === 0) {
+      match.ended = true;
+      match.paused = true;
+      matchState.className = 'match-state is-paused';
+      matchState.querySelector('span').textContent = '本局结束';
+      overlayTitle.textContent = '全员淘汰';
+      overlayMessage.textContent = source === 'radiation'
+        ? '最后一位方块也倒在了辐射坑里。'
+        : '所有方块都耗尽血量了。';
+      overlay.hidden = false;
+      pauseButton.disabled = true;
+    }
+    syncHud();
+  }
+
+  function registerObstacleCollision(fighter, obstacle, cooldownKey, impactSpeed) {
     match.obstacleCooldowns.set(cooldownKey, 0.32);
     match.collisions += 1;
     match.obstacleHits += 1;
+    boostAfterCollision(fighter, 'obstacle');
     setMood(fighter, 'obstacle', 760);
+    const impact = damageObstacle(obstacle, impactSpeed);
+    let cactusDamage = 0;
+    if (obstacle.kind === 'cactus' && (match.cactusDamageCooldowns.get(cooldownKey) || 0) <= 0) {
+      match.cactusDamageCooldowns.set(cooldownKey, 1);
+      cactusDamage = applyDamage(fighter, 2, 'cactus', false);
+    }
     addBurst(fighter.x, fighter.y, [fighter.color, obstacle.accent, '#ffffff'], 9);
-    addEvent(`${fighter.name} 碰到障碍，弹开啦`, fighter.color);
-    showToast(`${fighter.name}：“咚！”`);
-    ITEM_SYSTEM_API.onCollision({ type: 'obstacle', block: fighter.id, obstacle: obstacle.id }, match);
+    const label = obstacleName(obstacle.kind);
+    const eventText = impact.destroyed
+      ? `${fighter.name} 撞碎了${label}（${impact.damage} 伤害）`
+      : `${fighter.name} 撞到${label}，耐久 ${obstacle.health}/${obstacle.maxHealth}`;
+    addEvent(cactusDamage > 0 ? `${eventText}，仙人掌 -${cactusDamage} HP` : eventText, fighter.color);
+    showToast(impact.destroyed ? `${label}被撞碎了！` : `${fighter.name}：“咚！”`);
+    ITEM_SYSTEM_API.onCollision({
+      type: 'obstacle', block: fighter.id, obstacle: obstacle.id,
+      damage: impact.damage, destroyed: impact.destroyed,
+    }, match);
   }
 
   function blockNormal(first, second, overlapX, overlapY) {
@@ -544,8 +878,10 @@
     const fighters = match.fighters;
     for (let firstIndex = 0; firstIndex < fighters.length; firstIndex += 1) {
       const first = fighters[firstIndex];
+      if (first.eliminated) continue;
       for (let secondIndex = firstIndex + 1; secondIndex < fighters.length; secondIndex += 1) {
         const second = fighters[secondIndex];
+        if (second.eliminated) continue;
         const overlapX = (first.size + second.size) / 2 - Math.abs(second.x - first.x);
         const overlapY = (first.size + second.size) / 2 - Math.abs(second.y - first.y);
         if (overlapX <= 0 || overlapY <= 0) continue;
@@ -569,7 +905,11 @@
           // Equal-mass square blocks exchange their velocity on the impact axis.
           if (normal.axis === 'x') [first.vx, second.vx] = [second.vx, first.vx];
           else [first.vy, second.vy] = [second.vy, first.vy];
-          if (canCount) registerBlockCollision(first, second, pairKey);
+          if (canCount) {
+            registerBlockCollision(first, second, pairKey);
+            boostAfterCollision(first, 'block');
+            boostAfterCollision(second, 'block');
+          }
         }
         keepInside(first, countHit);
         keepInside(second, countHit);
@@ -579,6 +919,8 @@
 
   function registerBlockCollision(first, second, pairKey) {
     match.pairCooldowns.set(pairKey, 0.28);
+    recordHostility(first, second, 1);
+    recordHostility(second, first, 1);
     match.collisions += 1;
     match.blockHits += 1;
     setMood(first, 'bump', 760);
@@ -617,6 +959,334 @@
     }, 820);
   }
 
+  function initializeItemSystem() {
+    if (!match || !world) return;
+    match.items = [];
+    match.projectiles = [];
+    match.flames = [];
+    match.c4Charges = [];
+    match.itemEffects = [];
+    match.itemUseReadyAt = match.simulationTime;
+    match.itemSpawnCooldown = ITEM_RULES.refillInterval;
+    for (let index = 0; index < ITEM_RULES.maxOnField; index += 1) spawnItemPickup();
+    syncItemHud();
+  }
+
+  function disposeItemSystem() {
+    if (!match) return;
+    match.items = [];
+    match.projectiles = [];
+    match.flames = [];
+    match.c4Charges = [];
+    match.itemEffects = [];
+  }
+
+  function getItemSystemSnapshot() {
+    if (!match) return null;
+    return {
+      enabled: ITEM_SYSTEM_API.enabled,
+      maxOnField: ITEM_RULES.maxOnField,
+      count: totalItemCount(),
+      globalCooldown: Number(itemCooldownRemaining().toFixed(3)),
+      ground: match.items.map((item) => ({ id: item.id, type: item.type, x: item.x, y: item.y })),
+      held: match.fighters.flatMap((fighter) => fighter.heldItems.map((item) => ({
+        id: item.id, type: item.type, block: fighter.id,
+      }))),
+      projectiles: match.projectiles.length,
+      flames: match.flames.length,
+      attachedC4: match.c4Charges.length,
+    };
+  }
+
+  function spawnItemPickup(type = ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)]) {
+    if (!match || !world || totalItemCount() >= ITEM_RULES.maxOnField) return false;
+    const safeType = Object.hasOwn(ITEM_DEFINITIONS, type) ? type : ITEM_TYPES[0];
+    const radius = Math.max(10, world.cell * 0.31);
+    const margin = world.border + radius + 8;
+    const minX = margin;
+    const maxX = world.width - margin;
+    const minY = margin;
+    const maxY = world.height - margin;
+    let position = null;
+
+    for (let attempt = 0; attempt < 700; attempt += 1) {
+      const x = minX + Math.random() * Math.max(1, maxX - minX);
+      const y = minY + Math.random() * Math.max(1, maxY - minY);
+      const overlapsBlock = match.fighters.some((fighter) => !fighter.eliminated
+        && Math.hypot(fighter.x - x, fighter.y - y) < fighter.size / 2 + radius + world.cell * 0.24);
+      const overlapsObstacle = match.obstacles.some((obstacle) => obstacleOverlaps(x, y, radius * 2, obstacle, 7));
+      const overlapsPit = match.radiationPits.some((pit) => obstacleOverlaps(x, y, radius * 2, pit, 5));
+      const overlapsPickup = match.items.some((item) => Math.hypot(item.x - x, item.y - y) < item.radius + radius + 10);
+      if (!overlapsBlock && !overlapsObstacle && !overlapsPit && !overlapsPickup) {
+        position = { x, y };
+        break;
+      }
+    }
+    if (!position) return false;
+
+    const definition = ITEM_DEFINITIONS[safeType];
+    match.items.push({
+      id: `item-${match.nextItemId++}`,
+      type: safeType,
+      x: position.x,
+      y: position.y,
+      radius,
+      phase: Math.random() * Math.PI * 2,
+      bornAt: match.simulationTime,
+    });
+    addEvent(`场上出现了${definition.name}`, definition.color);
+    return true;
+  }
+
+  function pickupItems() {
+    if (!match.items.length) return false;
+    let changed = false;
+    const remaining = [];
+    match.items.forEach((pickup) => {
+      const collector = match.fighters.find((fighter) => !fighter.eliminated
+        && Math.hypot(fighter.x - pickup.x, fighter.y - pickup.y) <= fighter.size / 2 + pickup.radius);
+      if (!collector) {
+        remaining.push(pickup);
+        return;
+      }
+      collector.heldItems.push({
+        id: pickup.id,
+        type: pickup.type,
+        acquiredAt: match.simulationTime,
+      });
+      const definition = ITEM_DEFINITIONS[pickup.type];
+      addEvent(`${collector.name} 拾起${definition.name}，准备自动使用`, definition.color);
+      showToast(`${collector.name} 拾起${definition.name}`);
+      changed = true;
+    });
+    if (changed) match.items = remaining;
+    return changed;
+  }
+
+  function dropHeldItems(fighter) {
+    if (!match || !fighter?.heldItems.length) return;
+    const dropped = fighter.heldItems.splice(0);
+    dropped.forEach((item, index) => {
+      const radius = Math.max(10, world.cell * 0.31);
+      const angle = (index / Math.max(1, dropped.length)) * Math.PI * 2;
+      match.items.push({
+        id: item.id,
+        type: item.type,
+        x: Math.max(world.border + radius, Math.min(world.width - world.border - radius, fighter.x + Math.cos(angle) * radius * 1.7)),
+        y: Math.max(world.border + radius, Math.min(world.height - world.border - radius, fighter.y + Math.sin(angle) * radius * 1.7)),
+        radius,
+        phase: Math.random() * Math.PI * 2,
+        bornAt: match.simulationTime,
+      });
+    });
+    syncItemHud();
+  }
+
+  function pickHostileTarget(shooter) {
+    if (!match || !shooter || shooter.eliminated) return null;
+    const candidates = match.fighters.filter((fighter) => !fighter.eliminated && fighter.id !== shooter.id);
+    if (!candidates.length) return null;
+    const scored = candidates.map((fighter) => ({
+      fighter,
+      hostility: hostilityToward(shooter, fighter),
+      distance: Math.hypot(fighter.x - shooter.x, fighter.y - shooter.y),
+    }));
+    const maxHostility = Math.max(...scored.map((entry) => entry.hostility));
+    if (maxHostility > 0.04) {
+      scored.sort((first, second) => second.hostility - first.hostility || first.distance - second.distance);
+      return scored[0].fighter;
+    }
+    scored.sort((first, second) => first.distance - second.distance);
+    return scored[0].fighter;
+  }
+
+  function reflectCoordinate(position, velocity, seconds, minimum, maximum) {
+    const span = maximum - minimum;
+    if (span <= 0) return (minimum + maximum) / 2;
+    const period = span * 2;
+    const offset = ((position - minimum + velocity * seconds) % period + period) % period;
+    return minimum + (offset <= span ? offset : period - offset);
+  }
+
+  function solveInterceptTime(shooter, target, projectileSpeed) {
+    const rx = target.x - shooter.x;
+    const ry = target.y - shooter.y;
+    const vx = target.vx;
+    const vy = target.vy;
+    const a = vx * vx + vy * vy - projectileSpeed * projectileSpeed;
+    const b = 2 * (rx * vx + ry * vy);
+    const c = rx * rx + ry * ry;
+    const candidates = [];
+    if (Math.abs(a) < 1e-8) {
+      if (Math.abs(b) > 1e-8) candidates.push(-c / b);
+    } else {
+      const discriminant = b * b - 4 * a * c;
+      if (discriminant >= 0) {
+        const root = Math.sqrt(discriminant);
+        candidates.push((-b - root) / (2 * a), (-b + root) / (2 * a));
+      }
+    }
+    const positive = candidates.filter((time) => Number.isFinite(time) && time > 0);
+    return positive.length ? Math.min(...positive) : Math.sqrt(c) / Math.max(1, projectileSpeed);
+  }
+
+  function predictInterceptPoint(shooter, target, projectileSpeed) {
+    const maxPredictionTime = ITEM_RULES.projectileLifetime;
+    let time = Math.min(maxPredictionTime, solveInterceptTime(shooter, target, projectileSpeed));
+    const bounds = nearestWallBounds(target);
+    let predicted = { x: target.x, y: target.y };
+    for (let iteration = 0; iteration < 4; iteration += 1) {
+      predicted = {
+        x: reflectCoordinate(target.x, target.vx, time, bounds.minX, bounds.maxX),
+        y: reflectCoordinate(target.y, target.vy, time, bounds.minY, bounds.maxY),
+      };
+      time = Math.min(maxPredictionTime, Math.hypot(predicted.x - shooter.x, predicted.y - shooter.y) / Math.max(1, projectileSpeed));
+    }
+    return predicted;
+  }
+
+  function useCooldownReady() {
+    return itemCooldownRemaining() <= 0.001;
+  }
+
+  function fireProjectile(owner, type, target, angle, damage, speed) {
+    if (!target || target.eliminated || owner.eliminated) return false;
+    const definition = ITEM_DEFINITIONS[type];
+    const nose = owner.size * 0.52 + 4;
+    match.projectiles.push({
+      id: `shot-${match.nextItemId++}`,
+      type,
+      ownerId: owner.id,
+      targetId: target.id,
+      x: owner.x + Math.cos(angle) * nose,
+      y: owner.y + Math.sin(angle) * nose,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      radius: Math.max(2.2, world.cell * (type === 'sniper' ? 0.075 : 0.06)),
+      damage,
+      life: ITEM_RULES.projectileLifetime,
+      color: definition.color,
+    });
+    return true;
+  }
+
+  function startFlamethrower(owner, target) {
+    if (!owner || !target) return false;
+    const aimPoint = predictInterceptPoint(owner, target, world.cell * 12);
+    match.flames.push({
+      id: `flame-${match.nextItemId++}`,
+      ownerId: owner.id,
+      targetId: target.id,
+      angle: Math.atan2(aimPoint.y - owner.y, aimPoint.x - owner.x),
+      remaining: ITEM_RULES.flamethrowerDuration,
+      damageTimers: new Map(),
+    });
+    return true;
+  }
+
+  function plantC4(owner, target) {
+    if (!owner || !target || owner.id === target.id || target.eliminated) return false;
+    match.c4Charges.push({
+      id: `c4-${match.nextItemId++}`,
+      ownerId: owner.id,
+      targetId: target.id,
+      x: target.x,
+      y: target.y,
+      remaining: ITEM_RULES.c4FuseSeconds,
+    });
+    recordHostility(target, owner, 4);
+    addEvent(`${owner.name} 把 C4 安装在 ${target.name} 身上（5 秒）`, ITEM_DEFINITIONS.c4.color);
+    showToast(`${target.name} 身上贴着 C4！`);
+    addBurst(target.x, target.y, [ITEM_DEFINITIONS.c4.color, '#ffffff'], 8);
+    return true;
+  }
+
+  function activateHeldItem(owner, item, target = null) {
+    if (!match || !owner || owner.eliminated || !item || !useCooldownReady()) return false;
+    const definition = ITEM_DEFINITIONS[item.type];
+    if (!definition) return false;
+    let used = false;
+
+    if (item.type === 'knife') {
+      if (!target || target.eliminated || target.id === owner.id) return false;
+      const damage = applyDamage(target, ITEM_RULES.knifeDamage, 'knife', true, owner.id);
+      addBurst(target.x, target.y, [owner.color, definition.color, '#ffffff'], 7);
+      addEvent(`${owner.name} 用刀碰中 ${target.name}（-${damage} HP）`, definition.color);
+      showToast(`${owner.name} 的刀命中！`);
+      used = true;
+    } else if (item.type === 'c4') {
+      used = plantC4(owner, target);
+    } else if (item.type === 'flamethrower') {
+      const enemy = pickHostileTarget(owner);
+      if (!enemy) return false;
+      used = startFlamethrower(owner, enemy);
+      if (used) {
+        addEvent(`${owner.name} 启动喷火器（5 秒）`, definition.color);
+        showToast(`${owner.name} 开始喷火！`);
+      }
+    } else {
+      const enemy = pickHostileTarget(owner);
+      if (!enemy) return false;
+      const speed = world.cell * (item.type === 'sniper'
+        ? ITEM_RULES.sniperBulletCellsPerSecond
+        : ITEM_RULES.mediumBulletCellsPerSecond);
+      const aimPoint = predictInterceptPoint(owner, enemy, speed);
+      const baseAngle = Math.atan2(aimPoint.y - owner.y, aimPoint.x - owner.x);
+      if (item.type === 'shotgun') {
+        const spread = Array.from({ length: ITEM_RULES.shotgunPellets }, (_value, index) => (
+          (index - (ITEM_RULES.shotgunPellets - 1) / 2) * 0.2
+        ));
+        spread.forEach((offset) => fireProjectile(owner, item.type, enemy, baseAngle + offset, ITEM_RULES.shotgunPelletDamage, speed));
+        addEvent(`${owner.name} 自动发射霰弹，预判瞄准 ${enemy.name}`, definition.color);
+      } else {
+        const damage = item.type === 'sniper' ? ITEM_RULES.sniperDamage : ITEM_RULES.pistolDamage;
+        used = fireProjectile(owner, item.type, enemy, baseAngle, damage, speed);
+        if (used) addEvent(`${owner.name} 自动瞄准 ${enemy.name} 发射${definition.name}`, definition.color);
+      }
+      if (item.type === 'shotgun') used = true;
+    }
+
+    if (!used) return false;
+    const heldIndex = owner.heldItems.indexOf(item);
+    if (heldIndex >= 0) owner.heldItems.splice(heldIndex, 1);
+    match.itemUseReadyAt = match.simulationTime + ITEM_RULES.globalUseCooldown;
+    match.itemUses += 1;
+    syncItemHud();
+    return true;
+  }
+
+  function tryAutoUseRangedItems() {
+    if (!match || !useCooldownReady()) return false;
+    const candidates = [];
+    match.fighters.forEach((fighter) => {
+      if (fighter.eliminated) return;
+      fighter.heldItems.forEach((item) => {
+        if (ITEM_DEFINITIONS[item.type]?.group === 'ranged') candidates.push({ fighter, item });
+      });
+    });
+    candidates.sort((first, second) => first.item.acquiredAt - second.item.acquiredAt);
+    for (const candidate of candidates) {
+      if (activateHeldItem(candidate.fighter, candidate.item)) return true;
+    }
+    return false;
+  }
+
+  function handleItemCollision(event) {
+    if (!match || !event || event.type !== 'block') return;
+    const first = match.fighters.find((fighter) => fighter.id === event.first);
+    const second = match.fighters.find((fighter) => fighter.id === event.second);
+    if (!first || !second || !useCooldownReady()) return;
+    const contactPairs = [[first, second], [second, first]];
+    for (const [owner, target] of contactPairs) {
+      if (owner.eliminated || target.eliminated) continue;
+      const heldItem = owner.heldItems
+        .filter((item) => ITEM_DEFINITIONS[item.type]?.group === 'contact')
+        .sort((a, b) => a.acquiredAt - b.acquiredAt)[0];
+      if (heldItem && activateHeldItem(owner, heldItem, target)) return;
+      if (!useCooldownReady()) return;
+    }
+  }
+
   function addBurst(x, y, colors, amount = 8) {
     if (!match) return;
     for (let index = 0; index < amount; index += 1) {
@@ -649,6 +1319,276 @@
     match.effects = remaining;
   }
 
+  function pointSegmentDistanceSquared(px, py, x1, y1, x2, y2) {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const lengthSquared = dx * dx + dy * dy;
+    if (lengthSquared <= 1e-8) return (px - x1) ** 2 + (py - y1) ** 2;
+    const amount = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / lengthSquared));
+    const nearestX = x1 + amount * dx;
+    const nearestY = y1 + amount * dy;
+    return (px - nearestX) ** 2 + (py - nearestY) ** 2;
+  }
+
+  function updateProjectiles(dt) {
+    const remaining = [];
+    match.projectiles.forEach((projectile) => {
+      const travelTime = Math.min(dt, projectile.life);
+      const previousX = projectile.x;
+      const previousY = projectile.y;
+      projectile.x += projectile.vx * travelTime;
+      projectile.y += projectile.vy * travelTime;
+      projectile.life -= dt;
+      let hitTarget = null;
+      for (const fighter of match.fighters) {
+        if (fighter.eliminated || fighter.id === projectile.ownerId) continue;
+        const hitRadius = fighter.size / 2 + projectile.radius;
+        const targetStartX = Number.isFinite(fighter.previousX) ? fighter.previousX : fighter.x;
+        const targetStartY = Number.isFinite(fighter.previousY) ? fighter.previousY : fighter.y;
+        const relativeDistance = pointSegmentDistanceSquared(
+          0, 0,
+          targetStartX - previousX, targetStartY - previousY,
+          fighter.x - projectile.x, fighter.y - projectile.y,
+        );
+        if (relativeDistance <= hitRadius * hitRadius) {
+          hitTarget = fighter;
+          break;
+        }
+      }
+      if (hitTarget) {
+        const damage = applyDamage(hitTarget, projectile.damage, projectile.type, true, projectile.ownerId);
+        match.projectileHits += 1;
+        addBurst(projectile.x, projectile.y, [projectile.color, hitTarget.color, '#ffffff'], 7);
+        addEvent(`${hitTarget.name} 被${ITEM_DEFINITIONS[projectile.type].name}命中（-${damage} HP）`, projectile.color);
+        return;
+      }
+      const inBounds = projectile.x >= world.border - 24 && projectile.x <= world.width - world.border + 24
+        && projectile.y >= world.border - 24 && projectile.y <= world.height - world.border + 24;
+      if (projectile.life > 0 && inBounds) remaining.push(projectile);
+    });
+    match.projectiles = remaining;
+  }
+
+  function flameContainsTarget(flame, owner, target) {
+    const dx = target.x - owner.x;
+    const dy = target.y - owner.y;
+    const distance = Math.hypot(dx, dy);
+    const reach = world.cell * ITEM_RULES.flamethrowerRangeCells + target.size / 2;
+    if (distance > reach || distance < 1) return false;
+    const direction = Math.atan2(dy, dx);
+    const difference = Math.atan2(Math.sin(direction - flame.angle), Math.cos(direction - flame.angle));
+    const targetAllowance = Math.asin(Math.min(1, target.size / 2 / distance));
+    return Math.abs(difference) <= ITEM_RULES.flamethrowerHalfAngle + targetAllowance;
+  }
+
+  function updateFlames(dt) {
+    const remaining = [];
+    match.flames.forEach((flame) => {
+      const owner = match.fighters.find((fighter) => fighter.id === flame.ownerId);
+      if (!owner || owner.eliminated) return;
+      const step = Math.min(dt, flame.remaining);
+      const preferredTarget = pickHostileTarget(owner);
+      if (preferredTarget) {
+        const aimPoint = predictInterceptPoint(owner, preferredTarget, world.cell * 12);
+        flame.angle = Math.atan2(aimPoint.y - owner.y, aimPoint.x - owner.x);
+        flame.targetId = preferredTarget.id;
+      }
+      const insideTargets = new Set();
+      match.fighters.forEach((target) => {
+        if (target.eliminated || target.id === owner.id || !flameContainsTarget(flame, owner, target)) return;
+        insideTargets.add(target.id);
+        let accumulated = (flame.damageTimers.get(target.id) || 0) + step;
+        while (accumulated >= 1 && !target.eliminated) {
+          applyDamage(target, ITEM_RULES.flamethrowerDamagePerSecond, 'flamethrower', true, owner.id);
+          accumulated -= 1;
+        }
+        flame.damageTimers.set(target.id, accumulated);
+      });
+      flame.damageTimers.forEach((_time, targetId) => {
+        if (!insideTargets.has(targetId)) flame.damageTimers.delete(targetId);
+      });
+      flame.remaining = Math.max(0, flame.remaining - dt);
+      if (flame.remaining > 1e-6) remaining.push(flame);
+      else addEvent(`${owner.name} 的喷火器燃料耗尽`, ITEM_DEFINITIONS.flamethrower.color);
+    });
+    match.flames = remaining;
+  }
+
+  function explodeC4(charge) {
+    const owner = match.fighters.find((fighter) => fighter.id === charge.ownerId);
+    const ownerName = owner ? owner.name : '方块';
+    const radius = world.cell * ITEM_RULES.c4RadiusCells;
+    const colors = [ITEM_DEFINITIONS.c4.color, '#ffe27a', '#ffffff'];
+    match.c4Detonations += 1;
+    match.itemEffects.push({ type: 'explosion', x: charge.x, y: charge.y, radius, life: 0.62, maxLife: 0.62 });
+    addBurst(charge.x, charge.y, colors, 22);
+    let hitCount = 0;
+    match.fighters.forEach((fighter) => {
+      if (fighter.eliminated || fighter.id === charge.ownerId) return;
+      if (Math.hypot(fighter.x - charge.x, fighter.y - charge.y) > radius + fighter.size / 2) return;
+      applyDamage(fighter, ITEM_RULES.c4Damage, 'c4', true, charge.ownerId);
+      hitCount += 1;
+    });
+    addEvent(`${ownerName} 安装的 C4 爆炸${hitCount ? `，波及 ${hitCount} 个方块` : ''}（安装者免疫）`, ITEM_DEFINITIONS.c4.color);
+    showToast('C4 爆炸！安装者免疫');
+  }
+
+  function updateC4Charges(dt) {
+    const remaining = [];
+    match.c4Charges.forEach((charge) => {
+      const target = match.fighters.find((fighter) => fighter.id === charge.targetId);
+      if (target) {
+        charge.x = target.x;
+        charge.y = target.y;
+      }
+      charge.remaining = Math.max(0, charge.remaining - dt);
+      if (charge.remaining <= 1e-6) explodeC4(charge);
+      else remaining.push(charge);
+    });
+    match.c4Charges = remaining;
+  }
+
+  function updateItemEffects(dt) {
+    match.itemEffects = match.itemEffects.filter((effect) => {
+      effect.life -= dt;
+      return effect.life > 0;
+    });
+  }
+
+  function updateItemSystem(dt) {
+    if (!match || !ITEM_SYSTEM_API.enabled) return;
+    match.itemSpawnCooldown = Math.max(0, match.itemSpawnCooldown - dt);
+    updateProjectiles(dt);
+    updateFlames(dt);
+    updateC4Charges(dt);
+    updateItemEffects(dt);
+    if (match.ended) {
+      syncItemHud();
+      return;
+    }
+    pickupItems();
+    tryAutoUseRangedItems();
+    if (totalItemCount() < ITEM_RULES.maxOnField && match.itemSpawnCooldown <= 0) {
+      if (spawnItemPickup()) match.itemSpawnCooldown = ITEM_RULES.refillInterval;
+      else match.itemSpawnCooldown = 1.2;
+    }
+    syncItemHud();
+  }
+
+  function renderItemSystem(_context, time = performance.now()) {
+    if (!match || !world || !ITEM_SYSTEM_API.enabled) return;
+    match.items.forEach((item) => {
+      const definition = ITEM_DEFINITIONS[item.type];
+      const pulse = 1 + Math.sin(time * 0.005 + item.phase) * 0.1;
+      ctx.save();
+      ctx.globalAlpha = 0.3;
+      ctx.fillStyle = definition.color;
+      ctx.beginPath();
+      ctx.arc(item.x, item.y, item.radius * 1.85 * pulse, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.shadowColor = definition.color;
+      ctx.shadowBlur = 14;
+      ctx.fillStyle = 'rgba(20, 29, 48, 0.96)';
+      ctx.beginPath();
+      ctx.arc(item.x, item.y, item.radius * pulse, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = definition.color;
+      ctx.stroke();
+      ctx.fillStyle = definition.color;
+      ctx.font = `900 ${Math.max(10, item.radius * 0.8)}px system-ui`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(definition.icon, item.x, item.y);
+      ctx.font = `800 ${Math.max(7, world.cell * 0.16)}px system-ui`;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(definition.name, item.x, item.y + item.radius + 9);
+      ctx.restore();
+    });
+
+    match.flames.forEach((flame) => {
+      const owner = match.fighters.find((fighter) => fighter.id === flame.ownerId);
+      if (!owner || owner.eliminated) return;
+      const length = world.cell * ITEM_RULES.flamethrowerRangeCells;
+      const width = Math.max(6, world.cell * 0.17);
+      const pulse = 1 + Math.sin(time * 0.035 + flame.angle) * 0.08;
+      ctx.save();
+      ctx.translate(owner.x, owner.y);
+      ctx.rotate(flame.angle);
+      ctx.globalAlpha = 0.34;
+      ctx.fillStyle = '#ff512f';
+      ctx.beginPath();
+      ctx.moveTo(owner.size * 0.42, -width);
+      ctx.lineTo(length * pulse, -length * 0.26 * pulse);
+      ctx.quadraticCurveTo(length * 0.78, 0, length * pulse, length * 0.26 * pulse);
+      ctx.lineTo(owner.size * 0.42, width);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = 0.55;
+      ctx.fillStyle = '#ffd166';
+      ctx.beginPath();
+      ctx.moveTo(owner.size * 0.46, -width * 0.38);
+      ctx.lineTo(length * 0.78 * pulse, 0);
+      ctx.lineTo(owner.size * 0.46, width * 0.38);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    });
+
+    match.projectiles.forEach((projectile) => {
+      ctx.save();
+      ctx.strokeStyle = projectile.color;
+      ctx.lineWidth = Math.max(2, projectile.radius * 1.6);
+      ctx.lineCap = 'round';
+      ctx.shadowColor = projectile.color;
+      ctx.shadowBlur = 8;
+      ctx.beginPath();
+      ctx.moveTo(projectile.x - projectile.vx * 0.025, projectile.y - projectile.vy * 0.025);
+      ctx.lineTo(projectile.x, projectile.y);
+      ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(projectile.x, projectile.y, Math.max(1.6, projectile.radius * 0.5), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
+
+    match.c4Charges.forEach((charge) => {
+      const target = match.fighters.find((fighter) => fighter.id === charge.targetId);
+      const offset = target ? target.size * 0.22 : 8;
+      ctx.save();
+      ctx.fillStyle = '#13231d';
+      ctx.strokeStyle = ITEM_DEFINITIONS.c4.color;
+      ctx.lineWidth = 2;
+      roundedRect(charge.x + offset, charge.y - offset - 5, 19, 13, 4);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '900 8px system-ui';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`C${Math.max(1, Math.ceil(charge.remaining))}`, charge.x + offset + 9.5, charge.y - offset + 1.5);
+      ctx.restore();
+    });
+
+    match.itemEffects.forEach((effect) => {
+      const progress = 1 - effect.life / effect.maxLife;
+      const radius = effect.radius * Math.max(0.15, progress);
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, 1 - progress);
+      ctx.strokeStyle = '#ffe27a';
+      ctx.lineWidth = Math.max(2, world.cell * 0.08);
+      ctx.shadowColor = '#ff9f43';
+      ctx.shadowBlur = 18;
+      ctx.beginPath();
+      ctx.arc(effect.x, effect.y, radius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    });
+  }
+
   function decrementCooldowns(map, dt) {
     map.forEach((timeLeft, key) => {
       if (timeLeft <= dt) map.delete(key);
@@ -656,18 +1596,69 @@
     });
   }
 
+  function isInsideRadiationPit(fighter, pit) {
+    return obstacleOverlaps(fighter.x, fighter.y, fighter.size, pit);
+  }
+
+  function isInRadiationSlowZone(fighter) {
+    return match.radiationPits.some((pit) => isInsideRadiationPit(fighter, pit));
+  }
+
+  function updateRadiationDamage(fighter, dt) {
+    const activePitIds = new Set();
+    for (const pit of match.radiationPits) {
+      if (!isInsideRadiationPit(fighter, pit)) continue;
+      activePitIds.add(pit.id);
+      let timeLeft = fighter.radiationTimers.get(pit.id);
+      if (timeLeft === undefined) {
+        fighter.radiationTimers.set(pit.id, 1);
+        continue;
+      }
+      timeLeft -= dt;
+      if (timeLeft <= 0) {
+        applyDamage(fighter, 2, 'radiation');
+        fighter.radiationTimers.set(pit.id, 1);
+        if (fighter.eliminated) break;
+      } else {
+        fighter.radiationTimers.set(pit.id, timeLeft);
+      }
+    }
+    fighter.radiationTimers.forEach((_timeLeft, pitId) => {
+      if (!activePitIds.has(pitId)) fighter.radiationTimers.delete(pitId);
+    });
+  }
+
   function update(dt) {
-    if (!match || match.paused) return;
+    if (!match) return;
+    if (match.paused) {
+      if (match.ended) {
+        updateEffects(dt);
+        updateItemEffects(dt);
+      }
+      return;
+    }
+    match.simulationTime += dt;
     decrementCooldowns(match.pairCooldowns, dt);
     decrementCooldowns(match.obstacleCooldowns, dt);
+    decrementCooldowns(match.cactusDamageCooldowns, dt);
     const now = performance.now();
 
     match.fighters.forEach((fighter) => {
-      fighter.x += fighter.vx * dt;
-      fighter.y += fighter.vy * dt;
+      if (fighter.eliminated) return;
+      fighter.previousX = fighter.x;
+      fighter.previousY = fighter.y;
+      const movementScale = isInRadiationSlowZone(fighter) ? 0.5 : 1;
+      fighter.x += fighter.vx * dt * movementScale;
+      fighter.y += fighter.vy * dt * movementScale;
+      const friction = MAP_DEFINITIONS[match.config.mapType].friction;
+      const drag = Math.pow(1 - friction, dt * 60);
+      fighter.vx *= drag;
+      fighter.vy *= drag;
       fighter.angle = Math.atan2(fighter.vy, fighter.vx);
       updateWalls(fighter);
       resolveObstacleCollisions(fighter, true);
+      updateRadiationDamage(fighter, dt);
+      if (fighter.eliminated) return;
 
       if (fighter.faceMood !== 'idle' && now >= fighter.moodUntil) fighter.faceMood = 'idle';
       fighter.blinkIn -= dt;
@@ -681,10 +1672,12 @@
     for (let pass = 0; pass < 2; pass += 1) {
       resolveBlockCollisions(true);
       match.fighters.forEach((fighter) => {
+        if (fighter.eliminated) return;
         resolveObstacleCollisions(fighter, true);
         keepInside(fighter, true);
       });
     }
+    match.obstacles = match.obstacles.filter((obstacle) => !obstacle.destroyed);
     updateEffects(dt);
     ITEM_SYSTEM_API.update(dt, match);
 
@@ -724,19 +1717,20 @@
   }
 
   function drawArena() {
+    const map = MAP_DEFINITIONS[match.config.mapType] || MAP_DEFINITIONS.empty;
     ctx.clearRect(0, 0, world.width, world.height);
-    ctx.fillStyle = '#10182b';
+    ctx.fillStyle = map.base;
     ctx.fillRect(0, 0, world.width, world.height);
 
     const glow = ctx.createLinearGradient(0, 0, world.width, world.height);
-    glow.addColorStop(0, 'rgba(75, 112, 176, 0.22)');
+    glow.addColorStop(0, map.glowA);
     glow.addColorStop(0.48, 'rgba(31, 42, 71, 0.02)');
-    glow.addColorStop(1, 'rgba(111, 78, 155, 0.19)');
+    glow.addColorStop(1, map.glowB);
     ctx.fillStyle = glow;
     ctx.fillRect(0, 0, world.width, world.height);
 
     ctx.beginPath();
-    ctx.strokeStyle = 'rgba(186, 207, 248, 0.115)';
+    ctx.strokeStyle = map.grid;
     ctx.lineWidth = 1;
     for (let x = world.border; x <= world.width - world.border; x += world.cell) {
       ctx.moveTo(Math.round(x) + 0.5, world.border);
@@ -750,16 +1744,19 @@
 
     // The bright frame is both a visible arena border and the actual solid boundary.
     ctx.save();
-    ctx.shadowColor = 'rgba(219, 232, 255, 0.92)';
+    ctx.shadowColor = map.borderGlow;
     ctx.shadowBlur = 16;
-    ctx.strokeStyle = 'rgba(243, 248, 255, 0.98)';
+    ctx.strokeStyle = map.borderGlow;
     ctx.lineWidth = 3;
     ctx.strokeRect(world.border / 2, world.border / 2, world.width - world.border, world.height - world.border);
     ctx.restore();
 
-    ctx.strokeStyle = 'rgba(157, 184, 232, 0.32)';
+    ctx.strokeStyle = map.grid;
     ctx.lineWidth = 1;
     ctx.strokeRect(world.border + 5.5, world.border + 5.5, world.width - (world.border + 5.5) * 2, world.height - (world.border + 5.5) * 2);
+
+    if (match.config.mapType === 'ice') drawIceSurface();
+    if (match.config.mapType === 'nuclear') drawRadiationPits(performance.now());
 
     const mark = Math.min(13, world.cell * 0.32);
     ctx.fillStyle = 'rgba(245, 249, 255, 0.92)';
@@ -773,30 +1770,174 @@
     ctx.fillRect(world.width - world.border - 3, world.height - world.border - mark - 1, 2, mark);
   }
 
+  function drawIceSurface() {
+    ctx.save();
+    ctx.globalAlpha = 0.42;
+    ctx.strokeStyle = 'rgba(202, 246, 255, 0.35)';
+    ctx.lineWidth = 2;
+    const facets = [
+      [0.08, 0.2, 0.28, 0.12], [0.42, 0.16, 0.54, 0.26], [0.72, 0.25, 0.91, 0.16],
+      [0.13, 0.66, 0.31, 0.74], [0.53, 0.54, 0.7, 0.66], [0.72, 0.83, 0.9, 0.74],
+    ];
+    facets.forEach(([x1, y1, x2, y2]) => {
+      ctx.beginPath();
+      ctx.moveTo(world.width * x1, world.height * y1);
+      ctx.lineTo(world.width * x2, world.height * y2);
+      ctx.stroke();
+    });
+    ctx.restore();
+  }
+
+  function drawRadiationPits(time) {
+    match.radiationPits.forEach((pit) => {
+      const pulse = 0.72 + Math.sin(time * 0.002 + pit.phase) * 0.1;
+      ctx.save();
+      ctx.translate(pit.x, pit.y);
+      ctx.rotate(-0.12);
+      ctx.globalAlpha = pulse;
+      ctx.shadowColor = '#b8ff49';
+      ctx.shadowBlur = 22;
+      ctx.fillStyle = 'rgba(137, 204, 50, 0.29)';
+      roundedRect(-pit.width / 2, -pit.height / 2, pit.width, pit.height, pit.height * 0.42);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = 'rgba(201, 255, 117, 0.92)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(226, 255, 170, 0.52)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, pit.width * 0.34, pit.height * 0.3, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(235, 255, 190, 0.88)';
+      ctx.font = `${Math.max(10, world.cell * 0.42)}px system-ui`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('☢', 0, 1);
+      ctx.restore();
+    });
+  }
+
+  function drawTree(obstacle, time) {
+    const { x, y, width, height } = obstacle;
+    const sway = Math.sin(time * 0.0014 + obstacle.variant) * width * 0.035;
+    ctx.fillStyle = '#69462f';
+    roundedRect(x - width * 0.12, y - height * 0.08, width * 0.24, height * 0.47, width * 0.07);
+    ctx.fill();
+    const foliage = match.config.mapType === 'nuclear'
+      ? ['#88c84c', '#65ad43', '#a1dc50']
+      : ['#42a879', '#2f8c68', '#70bc79'];
+    [[-0.23, -0.1], [0.2, -0.12], [0, -0.32]].forEach(([offset, vertical], index) => {
+      ctx.fillStyle = foliage[(index + obstacle.variant) % foliage.length];
+      ctx.beginPath();
+      ctx.arc(x + offset * width + (index === 1 ? sway : 0), y + vertical * height, width * (index === 2 ? 0.29 : 0.34), 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.strokeStyle = 'rgba(226, 255, 214, 0.68)';
+    ctx.lineWidth = Math.max(1, width * 0.025);
+    ctx.beginPath();
+    ctx.arc(x, y - height * 0.26, width * 0.3, Math.PI * 1.04, Math.PI * 1.82);
+    ctx.stroke();
+  }
+
+  function drawRock(obstacle) {
+    const { x, y, width, height } = obstacle;
+    ctx.beginPath();
+    ctx.moveTo(x - width * 0.5, y + height * 0.25);
+    ctx.lineTo(x - width * 0.38, y - height * 0.21);
+    ctx.lineTo(x - width * 0.11, y - height * 0.49);
+    ctx.lineTo(x + width * 0.27, y - height * 0.37);
+    ctx.lineTo(x + width * 0.5, y + height * 0.2);
+    ctx.lineTo(x + width * 0.22, y + height * 0.48);
+    ctx.lineTo(x - width * 0.3, y + height * 0.43);
+    ctx.closePath();
+    const stone = ctx.createLinearGradient(x, y - height / 2, x, y + height / 2);
+    stone.addColorStop(0, '#b1ad98');
+    stone.addColorStop(1, '#625f59');
+    ctx.fillStyle = stone;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(242, 233, 210, 0.76)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  function drawCactus(obstacle, time) {
+    const { x, y, width, height } = obstacle;
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#4b3825';
+    ctx.lineWidth = width * 0.22;
+    ctx.beginPath();
+    ctx.moveTo(x, y + height * 0.44);
+    ctx.lineTo(x + Math.sin(time * 0.001 + obstacle.variant) * width * 0.025, y - height * 0.42);
+    ctx.moveTo(x - width * 0.25, y + height * 0.15);
+    ctx.lineTo(x - width * 0.25, y - height * 0.1);
+    ctx.lineTo(x - width * 0.08, y - height * 0.1);
+    ctx.moveTo(x + width * 0.25, y + height * 0.1);
+    ctx.lineTo(x + width * 0.25, y - height * 0.13);
+    ctx.lineTo(x + width * 0.08, y - height * 0.13);
+    ctx.stroke();
+    ctx.strokeStyle = '#74bf68';
+    ctx.lineWidth = width * 0.14;
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(225, 255, 194, 0.8)';
+    for (let index = 0; index < 5; index += 1) {
+      const spikeY = y - height * 0.3 + index * height * 0.14;
+      ctx.fillRect(x - width * 0.035, spikeY, width * 0.07, Math.max(1, width * 0.07));
+    }
+    ctx.restore();
+  }
+
+  function drawObstacleShadow(obstacle) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(17, 27, 36, 0.35)';
+    ctx.beginPath();
+    ctx.ellipse(obstacle.x + 2, obstacle.y + obstacle.height * 0.34, obstacle.width * 0.48, obstacle.height * 0.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawObstacleHealthBar(obstacle) {
+    const ratio = obstacle.maxHealth > 0 ? Math.max(0, obstacle.health / obstacle.maxHealth) : 0;
+    const barWidth = Math.max(30, obstacle.width * 1.22);
+    const barHeight = Math.max(3, world.cell * 0.065);
+    const barX = obstacle.x - barWidth / 2;
+    const barY = obstacle.y - obstacle.height / 2 - barHeight - 5;
+    ctx.save();
+    ctx.globalAlpha = 0.94;
+    ctx.font = `700 ${Math.max(6, world.cell * 0.14)}px system-ui`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+    ctx.fillText(`${Math.ceil(obstacle.health)}/${obstacle.maxHealth}`, obstacle.x, barY - 1);
+    ctx.fillStyle = 'rgba(10, 18, 27, 0.8)';
+    roundedRect(barX, barY, barWidth, barHeight, barHeight / 2);
+    ctx.fill();
+    ctx.fillStyle = ratio > 0.5 ? '#78dc8b' : (ratio > 0.25 ? '#ffd166' : '#ff7184');
+    if (ratio > 0) {
+      roundedRect(barX, barY, Math.max(barHeight, barWidth * ratio), barHeight, barHeight / 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   function drawObstacles(time) {
     if (!match.obstacles.length) return;
     match.obstacles.forEach((obstacle, index) => {
+      if (obstacle.destroyed) return;
       ctx.save();
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.42)';
-      ctx.shadowBlur = 11;
-      ctx.shadowOffsetY = 5;
-      const surface = ctx.createLinearGradient(obstacle.x, obstacle.y - obstacle.height / 2, obstacle.x, obstacle.y + obstacle.height / 2);
-      surface.addColorStop(0, '#677b9c');
-      surface.addColorStop(1, '#354662');
-      ctx.fillStyle = surface;
-      roundedRect(obstacle.x - obstacle.width / 2, obstacle.y - obstacle.height / 2, obstacle.width, obstacle.height, obstacle.height * 0.38);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      ctx.shadowOffsetY = 0;
-      ctx.lineWidth = 1.5;
-      ctx.strokeStyle = 'rgba(229, 239, 255, 0.8)';
-      roundedRect(obstacle.x - obstacle.width / 2 + 0.5, obstacle.y - obstacle.height / 2 + 0.5, obstacle.width - 1, obstacle.height - 1, obstacle.height * 0.35);
-      ctx.stroke();
+      drawObstacleShadow(obstacle);
+      if (obstacle.kind === 'tree') drawTree(obstacle, time);
+      else if (obstacle.kind === 'rock') drawRock(obstacle);
+      else if (obstacle.kind === 'cactus') drawCactus(obstacle, time);
+      ctx.globalAlpha = 0.2 + Math.sin(time * 0.003 + index) * 0.06;
       ctx.fillStyle = obstacle.accent;
-      ctx.globalAlpha = 0.7 + Math.sin(time * 0.003 + index) * 0.09;
-      roundedRect(obstacle.x - obstacle.width * 0.22, obstacle.y - obstacle.height * 0.11, obstacle.width * 0.44, Math.max(2, obstacle.height * 0.11), obstacle.height * 0.055);
+      ctx.beginPath();
+      ctx.ellipse(obstacle.x, obstacle.y + obstacle.height * 0.44, obstacle.width * 0.37, obstacle.height * 0.065, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
+      drawObstacleHealthBar(obstacle);
     });
   }
 
@@ -995,6 +2136,23 @@
     drawSmile(size);
   }
 
+  function drawFighterHealthBar(fighter, size) {
+    if (fighter.health >= fighter.maxHealth) return;
+    const ratio = Math.max(0, Math.min(1, fighter.health / fighter.maxHealth));
+    const width = size * 0.82;
+    const height = Math.max(2, size * 0.065);
+    const x = -width / 2;
+    const y = size / 2 + size * 0.11;
+    ctx.fillStyle = 'rgba(10, 18, 27, 0.82)';
+    roundedRect(x, y, width, height, height / 2);
+    ctx.fill();
+    if (ratio > 0) {
+      ctx.fillStyle = ratio > 0.5 ? '#78dc8b' : (ratio > 0.25 ? '#ffd166' : '#ff7184');
+      roundedRect(x, y, Math.max(height, width * ratio), height, height / 2);
+      ctx.fill();
+    }
+  }
+
   function drawFighter(fighter, time) {
     const size = fighter.size;
     const half = size / 2;
@@ -1038,12 +2196,16 @@
     ctx.fill();
     ctx.globalAlpha = 1;
 
-    if (mood === 'wall') drawSurprisedFace(size, lookX, lookY);
+    if (mood === 'wall' || mood === 'hurt') drawSurprisedFace(size, lookX, lookY);
     else if (mood === 'bump' || mood === 'obstacle') drawBumpedFace(size);
     else if (mood === 'dizzy') drawDizzyFace(size, time);
     else drawPersonalityFace(fighter, size, lookX, lookY);
 
-    if (mood === 'wall' || mood === 'obstacle') {
+    if (mood === 'hurt') {
+      ctx.fillStyle = '#ff5b70';
+      ctx.font = `900 ${Math.max(7, size * 0.18)}px system-ui`;
+      ctx.fillText(`-${fighter.lastDamage}`, half * 0.68, -half * 0.57);
+    } else if (mood === 'wall' || mood === 'obstacle') {
       ctx.fillStyle = 'rgba(255,255,255,.92)';
       ctx.font = `800 ${Math.max(7, size * 0.2)}px system-ui`;
       ctx.fillText(mood === 'wall' ? '!' : '✦', half * 0.68, -half * 0.57);
@@ -1052,6 +2214,7 @@
       ctx.font = `800 ${Math.max(6, size * 0.16)}px system-ui`;
       ctx.fillText('✦', half * 0.7, -half * 0.55);
     }
+    drawFighterHealthBar(fighter, size);
     ctx.restore();
   }
 
@@ -1072,8 +2235,10 @@
       drawArena();
       drawObstacles(time);
       drawEffects();
-      match.fighters.forEach((fighter) => drawFighter(fighter, time));
-      ITEM_SYSTEM_API.render(match);
+      match.fighters.forEach((fighter) => {
+        if (!fighter.eliminated) drawFighter(fighter, time);
+      });
+      ITEM_SYSTEM_API.render(match, time);
       hasRendered = true;
       if (canvasFallback) canvasFallback.hidden = true;
     } catch (error) {
@@ -1113,7 +2278,7 @@
       overlay.hidden = false;
     } else {
       matchState.className = 'match-state';
-      matchState.querySelector('span').textContent = '正在玩耍';
+      matchState.querySelector('span').textContent = MAP_DEFINITIONS[match.config.mapType].status;
       pauseButton.querySelector('span').textContent = '暂停';
       pauseButton.setAttribute('aria-label', '暂停弹跳');
       overlay.hidden = true;
@@ -1143,7 +2308,10 @@
   function readFormConfig() {
     return normalizeMatchConfig({
       blockCount: blockCountNumber.value,
+      blockHealth: blockHealthNumber.value,
       obstacleCount: obstacleCountNumber.value,
+      mapType: mapTypeSelect.value,
+      collisionAcceleration: collisionAccelerationToggle.checked,
     }, activeConfig);
   }
 
@@ -1152,13 +2320,39 @@
     blockCountNumber.value = String(config.blockCount);
     blockCountOutput.value = String(config.blockCount);
     blockCountOutput.textContent = String(config.blockCount);
+    blockHealthRange.value = String(config.blockHealth);
+    blockHealthNumber.value = String(config.blockHealth);
+    blockHealthOutput.value = String(config.blockHealth);
+    blockHealthOutput.textContent = String(config.blockHealth);
     obstacleCountRange.value = String(config.obstacleCount);
     obstacleCountNumber.value = String(config.obstacleCount);
     obstacleCountOutput.value = String(config.obstacleCount);
     obstacleCountOutput.textContent = String(config.obstacleCount);
+    mapTypeSelect.value = config.mapType;
+    formMapType = config.mapType;
+    collisionAccelerationToggle.checked = config.collisionAcceleration;
+    mapDescription.textContent = MAP_DEFINITIONS[config.mapType].description;
+    obstacleControl.hidden = !MAP_DEFINITIONS[config.mapType].obstacleKinds.length;
   }
 
+  mapTypeSelect.addEventListener('change', () => {
+    const nextMap = MAP_DEFINITIONS[mapTypeSelect.value] || MAP_DEFINITIONS.empty;
+    const previousMap = MAP_DEFINITIONS[formMapType] || MAP_DEFINITIONS.empty;
+    const currentCount = Number(obstacleCountNumber.value);
+    const nextCount = nextMap.obstacleKinds.length
+      ? (previousMap.obstacleKinds.length === 0 ? nextMap.defaultObstacleCount : currentCount)
+      : 0;
+    obstacleCountRange.value = String(nextCount);
+    obstacleCountNumber.value = String(nextCount);
+    obstacleCountOutput.value = String(nextCount);
+    obstacleCountOutput.textContent = String(nextCount);
+    mapDescription.textContent = nextMap.description;
+    obstacleControl.hidden = !nextMap.obstacleKinds.length;
+    formMapType = mapTypeSelect.value;
+  });
+
   addFormInputSync(blockCountRange, blockCountNumber, blockCountOutput, MATCH_LIMITS.blockCount.min, MATCH_LIMITS.blockCount.max);
+  addFormInputSync(blockHealthRange, blockHealthNumber, blockHealthOutput, MATCH_LIMITS.blockHealth.min, MATCH_LIMITS.blockHealth.max);
   addFormInputSync(obstacleCountRange, obstacleCountNumber, obstacleCountOutput, MATCH_LIMITS.obstacleCount.min, MATCH_LIMITS.obstacleCount.max);
   applySettingsButton.addEventListener('click', () => startMatch(readFormConfig()));
   defaultSettingsButton.addEventListener('click', () => {
@@ -1173,12 +2367,19 @@
     return {
       id: match.id,
       config: { ...match.config },
+      aliveCount: match.fighters.filter((fighter) => !fighter.eliminated).length,
       counters: {
         collisions: match.collisions,
         wallHits: match.wallHits,
         blockHits: match.blockHits,
         obstacleHits: match.obstacleHits,
+        obstaclesDestroyed: match.obstaclesDestroyed,
+        eliminations: match.eliminations,
+        itemUses: match.itemUses,
+        projectileHits: match.projectileHits,
+        c4Detonations: match.c4Detonations,
       },
+      items: getItemSystemSnapshot(),
       blocks: match.fighters.map((fighter) => ({
         id: fighter.id,
         name: fighter.name,
@@ -1186,8 +2387,14 @@
         x: fighter.x,
         y: fighter.y,
         face: fighter.faceMood,
+        health: fighter.health,
+        maxHealth: fighter.maxHealth,
+        eliminated: fighter.eliminated,
+        heldItems: fighter.heldItems.map((item) => item.type),
       })),
       obstacles: match.obstacles.map((obstacle) => ({ ...obstacle })),
+      radiationPits: match.radiationPits.map((pit) => ({ ...pit })),
+      platforms: match.radiationPits.map((pit) => ({ ...pit })),
       paused: match.paused,
     };
   }
@@ -1199,9 +2406,10 @@
   });
 
   window.BlockBounce = Object.freeze({
-    version: '0.3.0',
+    version: '0.6.0',
     defaults: DEFAULT_MATCH_CONFIG,
     limits: MATCH_LIMITS,
+    itemRules: ITEM_RULES,
     normalizeConfig: normalizeMatchConfig,
     createUniqueColors,
     startMatch: (config) => startMatch(config || null),

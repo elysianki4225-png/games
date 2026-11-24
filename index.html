@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#edf4fb" />
     <meta
       name="description"
-      content="自定义方块数量与障碍物，观察随机配色的小方块在竞技场里自动弹跳和碰撞。"
+      content="自定义地图、方块与血量，观察彩色方块自动弹跳、拾取一次性武器，并由 AI 预判攻击对手。"
     />
     <title>方块碰碰场 · Block Bounce</title>
     <link rel="stylesheet" href="styles.css" />
@@ -33,11 +33,11 @@
           <div class="intro-copy">
             <div class="eyebrow"><span>试验场 01</span><b>✳</b> 自定义你的方块派对</div>
             <h1 id="page-title">撞一下，<em>弹起来！</em></h1>
-            <p>自己设定方块和障碍物数量。每局随机生成不重复颜色；方块撞墙、撞伙伴或障碍物都会弹开并变表情。</p>
+            <p>方块自动弹跳、拾取一次性道具；AI 会锁定最具敌意的对手并预判轨迹，全程无需手动操作。</p>
           </div>
-          <div class="mode-stamp glass-panel" aria-label="自动碰撞模式">
+          <div class="mode-stamp glass-panel" aria-label="自动弹跳与 AI 道具对战">
             <span class="stamp-icon" aria-hidden="true">✦</span>
-            <span><strong>BOUNCE</strong><small>纯碰撞物理</small></span>
+            <span><strong>BOUNCE AI</strong><small>自动弹跳 · 自动出招</small></span>
           </div>
         </section>
 
@@ -53,10 +53,11 @@
               </div>
             </div>
 
-            <div class="roster" id="roster" aria-label="本局方块角色与当前表情"></div>
+            <div class="roster" id="roster" aria-label="本局方块角色、血量和手持道具"></div>
+            <div class="item-status" id="itemStatus" role="status" aria-live="polite">道具 0/2 · 自动使用就绪</div>
 
             <div class="arena-shell" id="arenaShell">
-              <canvas id="gameCanvas" aria-label="方块在边界和障碍物之间自动移动；碰到墙、障碍物或其他方块时会反弹。">
+              <canvas id="gameCanvas" aria-label="方块自动弹跳并自动拾取武器；AI 会预判攻击对手，显示生命值、子弹、喷火和 C4 效果。">
                 你的浏览器不支持 Canvas。
               </canvas>
               <div class="canvas-fallback" id="canvasFallback" aria-live="polite">
@@ -81,11 +82,12 @@
             </div>
 
             <div class="arena-footer">
-              <div class="stats-strip" aria-label="碰撞统计">
+              <div class="stats-strip" aria-label="碰撞与存活统计">
                 <div class="stat-pill"><span class="stat-icon impact-icon" aria-hidden="true">✳</span><span>碰撞<strong id="collisionCount">0</strong></span></div>
                 <div class="stat-pill"><span class="stat-icon wall-icon" aria-hidden="true">↗</span><span>撞墙<strong id="wallCount">0</strong></span></div>
                 <div class="stat-pill"><span class="stat-icon block-icon" aria-hidden="true">▣</span><span>撞方块<strong id="blockCount">0</strong></span></div>
                 <div class="stat-pill"><span class="stat-icon obstacle-icon" aria-hidden="true">⬡</span><span>撞障碍<strong id="obstacleHitCount">0</strong></span></div>
+                <div class="stat-pill"><span class="stat-icon alive-icon" aria-hidden="true">♥</span><span>存活<strong id="aliveCount" aria-live="polite">8</strong></span></div>
               </div>
               <div class="arena-actions">
                 <button class="action-button secondary" id="pauseButton" type="button" aria-label="暂停弹跳">
@@ -100,12 +102,27 @@
             </div>
           </section>
 
-          <aside class="side-column" aria-label="对局设置与碰撞说明">
+          <aside class="side-column" aria-label="对局设置、道具与碰撞说明">
             <section class="info-card glass-panel settings-card" aria-labelledby="settings-title">
               <div class="panel-heading">
                 <span class="heading-icon settings-heading-icon" aria-hidden="true">⚙</span>
                 <h2 id="settings-title">自定义对局</h2>
                 <span class="api-badge">MATCH API</span>
+              </div>
+
+              <div class="setting-control map-setting">
+                <div class="setting-label-row">
+                  <label for="mapTypeSelect">选择地图</label>
+                  <span class="map-live-tag">BIOME</span>
+                </div>
+                <select id="mapTypeSelect" class="map-select" aria-label="选择游戏地图">
+                  <option value="empty">空白竞技场 · 无障碍</option>
+                  <option value="forest">森林 · 树木与岩石</option>
+                  <option value="desert">沙漠 · 仙人掌</option>
+                  <option value="ice">冰原 · 滑溜海冰</option>
+                  <option value="nuclear">核辐射区 · 树木与辐射坑</option>
+                </select>
+                <p class="map-description" id="mapDescription">纯网格空场，没有障碍物，适合观察弹跳。</p>
               </div>
 
               <div class="setting-control">
@@ -120,30 +137,48 @@
                 <div class="range-limits"><span>1 个</span><span>最多 48 个</span></div>
               </div>
 
+              <div class="setting-control health-control">
+                <div class="setting-label-row">
+                  <label for="blockHealthRange">每个方块初始血量</label>
+                  <span class="setting-value"><output id="blockHealthOutput" for="blockHealthRange">1000</output><small>HP</small></span>
+                </div>
+                <div class="range-input-row">
+                  <input id="blockHealthRange" type="range" min="1" max="10000" step="1" value="1000" aria-label="设置每个方块的初始血量，1 到 10000 HP" />
+                  <input id="blockHealthNumber" type="number" min="1" max="10000" step="1" value="1000" aria-label="每个方块的初始血量数值" />
+                </div>
+                <div class="range-limits"><span>1 HP</span><span>最多 10000 HP</span></div>
+              </div>
+
               <div class="setting-control obstacle-control">
                 <div class="setting-label-row">
                   <label for="obstacleCountRange">障碍物数量</label>
-                  <span class="setting-value"><output id="obstacleCountOutput" for="obstacleCountRange">4</output><small>个</small></span>
+                  <span class="setting-value"><output id="obstacleCountOutput" for="obstacleCountRange">0</output><small>个</small></span>
                 </div>
                 <div class="range-input-row">
-                  <input id="obstacleCountRange" type="range" min="0" max="12" step="1" value="4" aria-label="设置障碍物数量，0 到 12 个" />
-                  <input id="obstacleCountNumber" type="number" min="0" max="12" step="1" value="4" aria-label="障碍物数量数值" />
+                  <input id="obstacleCountRange" type="range" min="0" max="12" step="1" value="0" aria-label="设置障碍物数量，0 到 12 个" />
+                  <input id="obstacleCountNumber" type="number" min="0" max="12" step="1" value="0" aria-label="障碍物数量数值" />
                 </div>
                 <div class="range-limits"><span>无障碍</span><span>最多 12 个</span></div>
               </div>
+
+              <label class="accel-toggle" for="collisionAccelerationToggle">
+                <span class="accel-copy"><strong>碰撞导致加速</strong><small>关闭时只改变方向，不增加速度</small></span>
+                <input id="collisionAccelerationToggle" type="checkbox" aria-label="开启碰撞导致的加速" />
+                <span class="toggle-track" aria-hidden="true"><i></i></span>
+              </label>
 
               <div class="color-note"><span aria-hidden="true">✦</span> 每局随机配色，本局颜色不会重复</div>
               <div class="settings-actions">
                 <button class="action-button primary apply-button" id="applySettingsButton" type="button">应用设置并开局</button>
                 <button class="defaults-button" id="defaultSettingsButton" type="button">恢复默认值</button>
               </div>
-              <div class="item-api-note"><span class="api-dot"></span><span><strong>道具接口</strong><small>已预留 · 尚未启用</small></span></div>
+              <div class="item-api-note"><span class="api-dot is-live"></span><span><strong>一次性道具</strong><small>场上+手持最多 2 件 · 全局使用冷却 6 秒</small></span></div>
             </section>
 
             <section class="info-card glass-panel rules-card" aria-labelledby="rules-title">
               <div class="panel-heading">
                 <span class="heading-icon" aria-hidden="true">✧</span>
-                <h2 id="rules-title">碰撞规则</h2>
+                <h2 id="rules-title">地图与道具规则</h2>
               </div>
               <div class="rule-list">
                 <div class="rule-row">
@@ -156,10 +191,30 @@
                 </div>
                 <div class="rule-row">
                   <span class="rule-symbol obstacle-symbol" aria-hidden="true">⬡</span>
-                  <span><strong>障碍物</strong><small>实体阻挡，可在设置里调整</small></span>
+                  <span><strong>可破坏障碍</strong><small>撞击会扣耐久，伤害随速度增大；耐久归零后消失</small></span>
+                </div>
+                <div class="rule-row">
+                  <span class="rule-symbol health-symbol" aria-hidden="true">♥</span>
+                  <span><strong>血量与淘汰</strong><small>可设每块初始 HP；血量归零就淘汰，并更新存活数</small></span>
+                </div>
+                <div class="rule-row">
+                  <span class="rule-symbol hazard-symbol" aria-hidden="true">☢</span>
+                  <span><strong>环境伤害</strong><small>仙人掌接触和辐射坑每秒扣 2 HP；坑内移速减半</small></span>
+                </div>
+                <div class="rule-row">
+                  <span class="rule-symbol weapon-symbol" aria-hidden="true">➤</span>
+                  <span><strong>远程武器</strong><small>手枪 10；霰弹 3 发×10；狙击 20 HP，AI 预判弹道</small></span>
+                </div>
+                <div class="rule-row">
+                  <span class="rule-symbol flame-symbol" aria-hidden="true">♨</span>
+                  <span><strong>喷火器</strong><small>喷射 5 秒，火焰范围内每秒 2 HP</small></span>
+                </div>
+                <div class="rule-row">
+                  <span class="rule-symbol c4-symbol" aria-hidden="true">C4</span>
+                  <span><strong>刀与 C4</strong><small>刀接触 5 HP；C4 贴身 5 秒后爆炸，2 格范围内 20 HP，安装者免疫</small></span>
                 </div>
               </div>
-              <div class="physics-note"><i></i> 没有炮管和射击，只有自动弹跳。</div>
+              <div class="physics-note"><i></i> 自动拾取与自动攻击，无手动操控；枪弹不会击中持枪方块。</div>
             </section>
 
             <section class="info-card glass-panel mood-card" aria-labelledby="mood-title">
