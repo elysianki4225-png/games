@@ -33,7 +33,7 @@
           <div class="intro-copy">
             <div class="eyebrow"><span>试验场 01</span><b>✳</b> 自定义你的方块派对</div>
             <h1 id="page-title">撞一下，<em>弹起来！</em></h1>
-            <p>方块自动弹跳、拾取一次性道具；AI 会锁定最具敌意的对手并预判轨迹，全程无需手动操作。</p>
+            <p>方块自动弹跳、拾取并使用道具；召唤物会追击敌人，AI 会预判轨迹，比赛全程无需手动操作。</p>
           </div>
           <div class="mode-stamp glass-panel" aria-label="自动弹跳与 AI 道具对战">
             <span class="stamp-icon" aria-hidden="true">✦</span>
@@ -57,7 +57,7 @@
             <div class="item-status" id="itemStatus" role="status" aria-live="polite">普通道具 0/2 · 自动使用就绪</div>
 
             <div class="arena-shell" id="arenaShell">
-              <canvas id="gameCanvas" aria-label="方块自动弹跳并自动拾取道具；场上拾取物和方块手持道具均显示模型；AI 会预判攻击对手，显示生命值、50 HP 护盾、子弹、喷火、穿透激光和 C4 效果。">
+              <canvas id="gameCanvas" aria-label="方块自动弹跳并自动拾取道具；召唤法杖生成三个 50 HP 红眼僵尸；肾上腺素提高移动速度并减伤，寒冰射手发射减速冰豌豆；显示护盾血量和数字伤害提示。">
                 你的浏览器不支持 Canvas。
               </canvas>
               <div class="canvas-fallback" id="canvasFallback" aria-live="polite">
@@ -227,14 +227,26 @@
                 </div>
                 <div class="rule-row">
                   <span class="rule-symbol shield-symbol" aria-hidden="true">⬟</span>
-                  <span><strong>盾牌</strong><small>获得独立的 50 HP 护盾，优先吸收伤害；不占普通道具栏，也不受 6 秒冷却限制</small></span>
+                  <span><strong>盾牌与伤害提示</strong><small>50 HP 独立护盾优先吸收伤害，余量在角色列表中显示；受击时会显示飘浮的数字伤害值</small></span>
                 </div>
                 <div class="rule-row">
                   <span class="rule-symbol laser-symbol" aria-hidden="true">⚡</span>
-                  <span><strong>激光枪</strong><small>自动预判瞄准并持续 2 秒；粗光束穿透方块，每帧造成 2 HP，颜色与射手相同</small></span>
+                  <span><strong>激光枪</strong><small>自动预判瞄准并持续 2 秒；粗光束穿透方块，每个动画帧造成 2 HP，按设备可用帧率输出</small></span>
+                </div>
+                <div class="rule-row">
+                  <span class="rule-symbol wand-symbol" aria-hidden="true">✦</span>
+                  <span><strong>召唤法杖</strong><small>召唤 3 个 50 HP 的红眼僵尸追击敌方；僵尸不会攻击召唤者，召唤者淘汰时它们消散</small></span>
+                </div>
+                <div class="rule-row">
+                  <span class="rule-symbol adrenaline-symbol" aria-hidden="true">⚡</span>
+                  <span><strong>肾上腺素</strong><small>持续 5 秒，移动速度提升 75%，受到的伤害降低 50%</small></span>
+                </div>
+                <div class="rule-row">
+                  <span class="rule-symbol ice-symbol" aria-hidden="true">❄</span>
+                  <span><strong>寒冰射手</strong><small>部署在地面 3 秒；每 0.5 秒预判射出 10 HP 冰豌豆，命中后减速 50% 并持续 2 秒</small></span>
                 </div>
               </div>
-              <div class="physics-note"><i></i> 自动拾取与自动攻击，无手动操控；枪弹和激光不会伤到射手，C4 安装者免疫自己的爆炸。</div>
+              <div class="physics-note"><i></i> 自动拾取与自动攻击，无手动操控；武器不会伤到射手，C4 安装者免疫自己的爆炸。</div>
             </section>
 
             <section class="info-card glass-panel mood-card" aria-labelledby="mood-title">
