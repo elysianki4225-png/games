@@ -412,6 +412,7 @@ h1, h2, p { margin: 0; }
 .priest-symbol { color: #a48334; background: #fff8d8; }
 .adrenaline-symbol { color: #d65c4d; background: #fff0ea; }
 .ice-symbol { color: #3988a2; background: #e7faff; }
+.cement-symbol { color: #60727d; background: #edf2f5; }
 .rule-row > span:last-child { display: grid; min-width: 0; gap: 2px; }
 .rule-row strong { color: #596780; font-size: 9px; font-weight: 760; }
 .rule-row small { color: #91a0b3; font-size: 8px; line-height: 1.4; }

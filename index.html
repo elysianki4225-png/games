@@ -33,7 +33,7 @@
           <div class="intro-copy">
             <div class="eyebrow"><span>试验场 01</span><b>✳</b> 自定义你的方块派对</div>
             <h1 id="page-title">撞一下，<em>弹起来！</em></h1>
-            <p>方块自动弹跳、拾取并使用道具；僵尸会随机碰撞，神父会以必中雷击保护召唤者，全程无需手动操作。</p>
+            <p>方块自动弹跳、拾取并使用道具；僵尸也会使用法杖与武器，水泥道具可筑起十秒无敌墙，全程无需手动操作。</p>
           </div>
           <div class="mode-stamp glass-panel" aria-label="自动弹跳与 AI 道具对战">
             <span class="stamp-icon" aria-hidden="true">✦</span>
@@ -57,7 +57,7 @@
             <div class="item-status" id="itemStatus" role="status" aria-live="polite">普通道具 0/2 · 自动使用就绪</div>
 
             <div class="arena-shell" id="arenaShell">
-              <canvas id="gameCanvas" aria-label="方块自动弹跳并自动拾取道具；僵尸随机弹跳、每秒流失 1 HP 并碰撞造成 5 HP 伤害；神圣法杖召唤浅色神父，周期性必中雷击；显示护盾血量和数字伤害提示。">
+              <canvas id="gameCanvas" aria-label="方块自动弹跳并自动拾取道具；僵尸随机弹跳、拾取武器并以召唤者名义攻击；肾上腺素拖尾与水泥四面墙效果；水泥墙持续十秒并阻挡激光。">
                 你的浏览器不支持 Canvas。
               </canvas>
               <div class="canvas-fallback" id="canvasFallback" aria-live="polite">
@@ -231,11 +231,11 @@
                 </div>
                 <div class="rule-row">
                   <span class="rule-symbol laser-symbol" aria-hidden="true">⚡</span>
-                  <span><strong>激光枪</strong><small>自动预判瞄准并持续 2 秒；粗光束穿透方块，每个动画帧造成 2 HP，按设备可用帧率输出</small></span>
+                  <span><strong>激光枪</strong><small>自动预判瞄准并持续 2 秒；粗光束穿透方块、但会被水泥墙阻挡，每个动画帧造成 2 HP，按设备可用帧率输出</small></span>
                 </div>
                 <div class="rule-row">
                   <span class="rule-symbol wand-symbol" aria-hidden="true">✦</span>
-                  <span><strong>召唤法杖</strong><small>召唤 3 个 50 HP 红眼僵尸随机弹跳；每秒流失 1 HP，碰撞敌人造成 5 HP（每只僵尸每秒最多一次）；可拾取道具，不伤召唤者；召唤者淘汰时消散</small></span>
+                  <span><strong>召唤法杖</strong><small>召唤 3 个 50 HP 红眼僵尸随机弹跳；每秒流失 1 HP，碰撞敌人造成 5 HP（每只僵尸每秒最多一次）；僵尸也会拾取并使用法杖、武器，攻击归属原召唤者、特效沿用僵尸色；召唤者淘汰时消散</small></span>
                 </div>
                 <div class="rule-row">
                   <span class="rule-symbol priest-symbol" aria-hidden="true">✛</span>
@@ -243,11 +243,15 @@
                 </div>
                 <div class="rule-row">
                   <span class="rule-symbol adrenaline-symbol" aria-hidden="true">⚡</span>
-                  <span><strong>肾上腺素</strong><small>持续 5 秒，移动速度提升 75%，受到的伤害降低 50%</small></span>
+                  <span><strong>肾上腺素</strong><small>持续 5 秒，移动速度提升 75%，受到的伤害降低 50%；激活期间拖出与方块/僵尸同色的粒子尾迹</small></span>
                 </div>
                 <div class="rule-row">
                   <span class="rule-symbol ice-symbol" aria-hidden="true">❄</span>
-                  <span><strong>寒冰射手</strong><small>部署在地面 3 秒；每 0.5 秒预判射出 10 HP 冰豌豆，命中后减速 50% 并持续 2 秒</small></span>
+                  <span><strong>寒冰射手</strong><small>部署在地面 3 秒；每 0.5 秒预判射出 10 HP 冰豌豆，命中后减速 50% 并持续 2 秒；僵尸部署时射手和冰豌豆沿用僵尸色</small></span>
+                </div>
+                <div class="rule-row">
+                  <span class="rule-symbol cement-symbol" aria-hidden="true">▤</span>
+                  <span><strong>水泥</strong><small>在自己四周生成四面无敌水泥墙，持续 10 秒；墙会让方块弹开，并阻挡激光</small></span>
                 </div>
               </div>
               <div class="physics-note"><i></i> 自动拾取与自动攻击，无手动操控；武器不会伤到射手，C4 安装者免疫自己的爆炸。</div>
