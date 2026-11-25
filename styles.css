@@ -241,6 +241,10 @@ h1, h2, p { margin: 0; }
 .roster-chip.is-zombie .roster-copy strong { color: #9d4955; }
 .roster-chip.is-priest { border-color: rgba(207, 175, 94, 0.28); background: rgba(255, 252, 233, 0.72); }
 .roster-chip.is-priest .roster-copy strong { color: #9a7a31; }
+.roster-chip.is-skeleton { border-color: rgba(107, 132, 116, 0.28); background: rgba(241, 248, 240, 0.78); }
+.roster-chip.is-skeleton .roster-copy strong { color: #5d7663; }
+.roster-chip.is-mechanical { border-color: rgba(55, 148, 138, 0.28); background: rgba(232, 249, 246, 0.78); }
+.roster-chip.is-mechanical .roster-copy strong { color: #347b78; }
 .roster-chip.is-slowed .roster-mood { color: #3989a4; }
 .roster-chip.has-adrenaline .roster-mood { color: #c65e49; }
 .item-status { display: flex; min-height: 25px; align-items: center; gap: 6px; margin: -4px 1px 9px; padding: 5px 9px; border: 1px solid rgba(114, 162, 198, 0.16); border-radius: 8px; color: #617c98; background: rgba(233, 245, 255, 0.76); font-size: 8px; font-weight: 750; font-variant-numeric: tabular-nums; }
@@ -413,6 +417,9 @@ h1, h2, p { margin: 0; }
 .adrenaline-symbol { color: #d65c4d; background: #fff0ea; }
 .ice-symbol { color: #3988a2; background: #e7faff; }
 .cement-symbol { color: #60727d; background: #edf2f5; }
+.snowflake-symbol { color: #3988a2; background: #e6faff; }
+.skeleton-symbol { color: #62766d; background: #edf4ee; }
+.mechanical-symbol { color: #347b78; background: #e7f8f5; }
 .rule-row > span:last-child { display: grid; min-width: 0; gap: 2px; }
 .rule-row strong { color: #596780; font-size: 9px; font-weight: 760; }
 .rule-row small { color: #91a0b3; font-size: 8px; line-height: 1.4; }

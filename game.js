@@ -132,6 +132,24 @@
     adrenalineTrailLife: 0.34,
     cementWallDuration: 10,
     cementWallThicknessCells: 0.14,
+    snowflakeCount: 100,
+    snowflakeDamage: 1,
+    snowflakeSlowFactor: 0.5,
+    snowflakeSlowDuration: 1,
+    snowflakeSpeedCellsPerSecond: 13,
+    snowflakeSpreadRadians: 0.18,
+    skeletonCount: 3,
+    skeletonHealth: 50,
+    skeletonHealthDrain: 1,
+    skeletonHealthDrainInterval: 1,
+    skeletonShotInterval: 2,
+    skeletonArrowDamage: 5,
+    skeletonArrowCellsPerSecond: 15,
+    mechanicalBlockHealth: 10000,
+    mechanicalBlockInitialDuration: 10,
+    mechanicalBlockPermanentHealth: 200,
+    mechanicalBlockDamageLimit: 10,
+    mechanicalBlockDamageInterval: 0.2,
     iceShooterDuration: 3,
     iceShotInterval: 0.5,
     iceDamage: 10,
@@ -165,10 +183,14 @@
     adrenaline: Object.freeze({ name: '肾上腺素', shortName: '肾上腺素', icon: '⚡', color: '#ff745e', group: 'ranged' }),
     iceShooter: Object.freeze({ name: '寒冰射手', shortName: '寒冰', icon: '❄', color: '#7de5ff', group: 'ranged' }),
     cement: Object.freeze({ name: '水泥', shortName: '水泥', icon: '▤', color: '#bdc6ce', group: 'ranged' }),
+    snowflake: Object.freeze({ name: '雪花风暴', shortName: '雪花', icon: '❄', color: '#9be8ff', group: 'ranged' }),
+    skeletonStaff: Object.freeze({ name: '骷髅法杖', shortName: '骷髅杖', icon: '☠', color: '#c7d3c8', group: 'ranged' }),
+    mechanicalBlock: Object.freeze({ name: '机械方块', shortName: '机械方块', icon: '⚙', color: '#83d4cc', group: 'ranged' }),
   });
   const ITEM_TYPES = Object.keys(ITEM_DEFINITIONS);
   const BORDER = 7;
   const NAMES = ['泡泡', '豆豆', '烈烈', '团子', '露露', '薄荷', '咕噜', '柚子', '跳跳', '米粒', '布丁', '云朵'];
+  const HAT_STYLES = Object.freeze(['cap', 'crown', 'beret', 'wizard']);
   const PERSONALITIES = ['smile', 'goofy', 'sassy', 'sleepy', 'starry', 'wink'];
   const PERSONALITY_LABELS = {
     smile: '开心漂浮',
@@ -482,6 +504,8 @@
       dark: appearance.dark,
       glow: appearance.glow,
       hue: appearance.hue,
+      hatStyle: appearance.hatStyle || HAT_STYLES[Math.abs(index) % HAT_STYLES.length],
+      hatColor: appearance.hatColor || appearance.color,
       personality: PERSONALITIES[index % PERSONALITIES.length],
       idle: PERSONALITY_LABELS[PERSONALITIES[index % PERSONALITIES.length]],
       x: position.x,
@@ -499,8 +523,16 @@
       shield: null,
       isZombie: false,
       isPriest: false,
+      isSkeleton: false,
+      isMechanical: false,
       summonerId: null,
       teamOwnerId: null,
+      mechanicalSummonerId: null,
+      mechanicalPhaseRemaining: 0,
+      mechanicalSettled: false,
+      mechanicalDamageReadyAt: 0,
+      skeletonHealthDrainRemaining: 0,
+      skeletonAttackCooldown: 0,
       zombieHealthDrainRemaining: 0,
       zombieContactCooldown: 0,
       priestAttacksRemaining: 0,
@@ -511,6 +543,8 @@
       slowFactor: 1,
       damageNumber: null,
       lastDamage: 0,
+      lastDamageAt: -Infinity,
+      lastTargetId: null,
       angle,
       faceMood: 'idle',
       moodUntil: 0,
@@ -580,6 +614,74 @@
     return priest;
   }
 
+  function createSkeleton(summoner, index) {
+    const appearance = {
+      color: summoner.color,
+      light: summoner.light,
+      dark: summoner.dark,
+      glow: summoner.glow,
+      hue: summoner.hue,
+      hatStyle: summoner.hatStyle,
+      hatColor: summoner.hatColor,
+    };
+    const skeleton = createFighter(appearance, match.fighters.length, match.config.blockCount, match.fighters);
+    const spawnAngle = summoner.angle + index * Math.PI * 2 / ITEM_RULES.skeletonCount;
+    const bounds = nearestWallBounds(skeleton);
+    const distance = summoner.size * 1.34;
+    skeleton.id = `skeleton-${match.nextSkeletonId++}`;
+    skeleton.name = `${summoner.name} 骷髅${index + 1}`;
+    skeleton.isSkeleton = true;
+    skeleton.summonerId = summoner.id;
+    skeleton.teamOwnerId = teamOwnerIdOf(summoner);
+    skeleton.hatStyle = summoner.hatStyle;
+    skeleton.hatColor = summoner.hatColor;
+    skeleton.idle = '随机弹跳 · 自动射箭';
+    skeleton.maxHealth = ITEM_RULES.skeletonHealth;
+    skeleton.health = ITEM_RULES.skeletonHealth;
+    skeleton.skeletonHealthDrainRemaining = ITEM_RULES.skeletonHealthDrainInterval;
+    skeleton.skeletonAttackCooldown = ITEM_RULES.skeletonShotInterval;
+    skeleton.x = Math.max(bounds.minX, Math.min(bounds.maxX, summoner.x + Math.cos(spawnAngle) * distance));
+    skeleton.y = Math.max(bounds.minY, Math.min(bounds.maxY, summoner.y + Math.sin(spawnAngle) * distance));
+    skeleton.previousX = skeleton.x;
+    skeleton.previousY = skeleton.y;
+    return skeleton;
+  }
+
+  function createMechanicalBlock(summoner) {
+    const appearance = {
+      color: summoner.color,
+      light: summoner.light,
+      dark: summoner.dark,
+      glow: summoner.glow,
+      hue: summoner.hue,
+      hatStyle: summoner.hatStyle,
+      hatColor: summoner.hatColor,
+    };
+    const machine = createFighter(appearance, match.fighters.length, match.config.blockCount, match.fighters);
+    const spawnAngle = summoner.angle + Math.PI * 0.72;
+    const bounds = nearestWallBounds(machine);
+    const distance = summoner.size * 1.38;
+    machine.id = `mechanical-${match.nextMechanicalId++}`;
+    machine.name = `${summoner.name} 机械方块`;
+    machine.isMechanical = true;
+    machine.summonerId = summoner.id;
+    machine.mechanicalSummonerId = summoner.id;
+    machine.teamOwnerId = teamOwnerIdOf(summoner);
+    machine.hatStyle = summoner.hatStyle;
+    machine.hatColor = summoner.hatColor;
+    machine.idle = '机械护卫 · 随机弹跳';
+    machine.maxHealth = ITEM_RULES.mechanicalBlockHealth;
+    machine.health = ITEM_RULES.mechanicalBlockHealth;
+    machine.mechanicalPhaseRemaining = ITEM_RULES.mechanicalBlockInitialDuration;
+    machine.mechanicalSettled = false;
+    machine.mechanicalDamageReadyAt = match.simulationTime;
+    machine.x = Math.max(bounds.minX, Math.min(bounds.maxX, summoner.x + Math.cos(spawnAngle) * distance));
+    machine.y = Math.max(bounds.minY, Math.min(bounds.maxY, summoner.y + Math.sin(spawnAngle) * distance));
+    machine.previousX = machine.x;
+    machine.previousY = machine.y;
+    return machine;
+  }
+
   function createRosterChip(fighter) {
     const chip = document.createElement('div');
     chip.className = 'roster-chip';
@@ -587,6 +689,8 @@
     chip.style.setProperty('--character-color', fighter.color);
     chip.classList.toggle('is-zombie', Boolean(fighter.isZombie));
     chip.classList.toggle('is-priest', Boolean(fighter.isPriest));
+    chip.classList.toggle('is-skeleton', Boolean(fighter.isSkeleton));
+    chip.classList.toggle('is-mechanical', Boolean(fighter.isMechanical));
     chip.setAttribute('aria-label', `${fighter.name}，${fighter.idle}，${fighter.health} HP`);
 
     const swatch = document.createElement('span');
@@ -682,13 +786,20 @@
       nextItemId: 1,
       nextZombieId: 1,
       nextPriestId: 1,
+      nextSkeletonId: 1,
+      nextMechanicalId: 1,
       nextIceShooterId: 1,
       nextCementWallId: 1,
+      predictionCache: new Map(),
       itemSpawnCooldown: 0,
       itemUseReadyAt: 0,
       itemUses: 0,
       projectileHits: 0,
       laserHits: 0,
+      snowflakeHits: 0,
+      skeletonArrowsFired: 0,
+      skeletonArrowsHit: 0,
+      mechanicalRedirects: 0,
       c4Detonations: 0,
       paused: false,
       ended: false,
@@ -773,6 +884,8 @@
       chip.classList.toggle('has-shield', Boolean(fighter.shield));
       chip.classList.toggle('is-zombie', fighter.isZombie);
       chip.classList.toggle('is-priest', fighter.isPriest);
+      chip.classList.toggle('is-skeleton', fighter.isSkeleton);
+      chip.classList.toggle('is-mechanical', fighter.isMechanical);
       chip.classList.toggle('is-slowed', fighter.slowRemaining > 0);
       chip.classList.toggle('has-adrenaline', fighter.adrenalineRemaining > 0);
       chip.classList.toggle('is-reacting', fighter.faceMood !== 'idle' && now < fighter.moodUntil);
@@ -780,20 +893,29 @@
       chip.classList.toggle('is-eliminated', fighter.eliminated);
       const roleLabel = fighter.isZombie
         ? `僵尸，召唤者 ${fighter.summonerId || '未知'}`
-        : (fighter.isPriest ? `神父，召唤者 ${fighter.summonerId || '未知'}` : '方块');
+        : (fighter.isPriest
+          ? `神父，召唤者 ${fighter.summonerId || '未知'}`
+          : (fighter.isSkeleton
+            ? `骷髅弓手，召唤者 ${fighter.summonerId || '未知'}`
+            : (fighter.isMechanical
+              ? `机械护卫，保护 ${fighter.mechanicalSummonerId || '未知'}`
+              : '方块')));
       const effectLabels = [
         fighter.adrenalineRemaining > 0 ? `肾上腺素 ${fighter.adrenalineRemaining.toFixed(1)} 秒` : '',
         fighter.slowRemaining > 0 ? `减速 ${fighter.slowRemaining.toFixed(1)} 秒` : '',
         fighter.isZombie ? `每秒流失 ${ITEM_RULES.zombieHealthDrain} HP，碰撞 ${ITEM_RULES.zombieContactDamage} HP` : '',
+        fighter.isSkeleton ? `每秒流失 ${ITEM_RULES.skeletonHealthDrain} HP，弓箭 ${ITEM_RULES.skeletonArrowDamage} HP / ${ITEM_RULES.skeletonShotInterval} 秒` : '',
         fighter.isPriest ? `神雷剩余 ${fighter.priestAttacksRemaining} 次` : '',
+        fighter.isMechanical && !fighter.mechanicalSettled ? `永久驻场倒计时 ${fighter.mechanicalPhaseRemaining.toFixed(1)} 秒` : '',
       ].filter(Boolean).join('，');
       chip.setAttribute('aria-label', `${fighter.name}，${roleLabel}，${label}，${Math.ceil(fighter.health)} / ${fighter.maxHealth} HP，手持道具 ${heldItemsLabel}，${fighter.shield ? `护盾 ${shieldHealth} / ${fighter.shield.maxHealth} HP` : '无护盾'}${effectLabels ? `，${effectLabels}` : ''}`);
     });
     const livingCount = match.fighters.filter((fighter) => !fighter.eliminated).length;
-    const livingPlayerCount = match.fighters.filter((fighter) => !fighter.eliminated && !fighter.isZombie && !fighter.isPriest).length;
+    const isPrimaryFighter = (fighter) => !fighter.isZombie && !fighter.isPriest && !fighter.isSkeleton && !fighter.isMechanical;
+    const livingPlayerCount = match.fighters.filter((fighter) => !fighter.eliminated && isPrimaryFighter(fighter)).length;
     aliveCount.textContent = String(livingCount);
     if (!match.paused && !match.ended && livingPlayerCount === 1) {
-      const survivor = match.fighters.find((fighter) => !fighter.eliminated && !fighter.isZombie && !fighter.isPriest);
+      const survivor = match.fighters.find((fighter) => !fighter.eliminated && isPrimaryFighter(fighter));
       matchState.querySelector('span').textContent = survivor ? `${survivor.name} · 最后一位` : '对局结束';
     } else if (!match.paused && !match.ended) {
       matchState.querySelector('span').textContent = MAP_DEFINITIONS[match.config.mapType].status;
@@ -976,12 +1098,44 @@
     return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
   }
 
+  function getMechanicalProtector(owner, requireReady = false) {
+    if (!match || !owner) return null;
+    return match.fighters
+      .filter((fighter) => fighter.isMechanical && !fighter.eliminated && fighter.mechanicalSummonerId === owner.id)
+      .filter((fighter) => !requireReady || fighter.mechanicalDamageReadyAt <= match.simulationTime + 1e-6)
+      .sort((first, second) => second.health / Math.max(1, second.maxHealth) - first.health / Math.max(1, first.maxHealth))[0] || null;
+  }
+
   function applyDamage(fighter, amount, source, announce = true, attackerId = null) {
     if (!fighter || fighter.eliminated || amount <= 0) return 0;
     const attacker = attackerId ? match.fighters.find((item) => item.id === attackerId) : null;
     if (attacker && areSummonAllies(attacker, fighter)) return 0;
+
+    if (!fighter.isMechanical && source !== 'zombieDecay' && source !== 'skeletonDecay') {
+      const protector = getMechanicalProtector(fighter, true);
+      if (protector) {
+        const redirectedAmount = Math.min(amount, ITEM_RULES.mechanicalBlockDamageLimit);
+        const protectorHealthBefore = protector.health;
+        const redirected = applyDamage(protector, redirectedAmount, source, announce, attackerId);
+        const actualRedirected = Math.min(protectorHealthBefore, redirected);
+        if (actualRedirected > 0) {
+          match.mechanicalRedirects += 1;
+          fighter.lastDamageAt = match.simulationTime;
+          addEvent(`${protector.name} 替 ${fighter.name} 承受 ${formatHealthAmount(actualRedirected)} HP`, protector.color);
+          amount = Math.max(0, amount - actualRedirected);
+          if (amount <= 1e-6) return 0;
+        }
+      }
+    }
+
+    if (fighter.isMechanical) {
+      if (fighter.mechanicalDamageReadyAt > match.simulationTime + 1e-6) return 0;
+      fighter.mechanicalDamageReadyAt = match.simulationTime + ITEM_RULES.mechanicalBlockDamageInterval;
+      amount = Math.min(amount, ITEM_RULES.mechanicalBlockDamageLimit);
+    }
+
     const baseDamage = Math.max(1, Math.round(amount));
-    const ignoresMitigation = source === 'zombieDecay';
+    const ignoresMitigation = source === 'zombieDecay' || source === 'skeletonDecay';
     const damage = !ignoresMitigation && fighter.adrenalineRemaining > 0
       ? baseDamage * (1 - ITEM_RULES.adrenalineDamageReduction)
       : baseDamage;
@@ -1001,6 +1155,7 @@
     }
 
     fighter.lastDamage = healthDamage;
+    fighter.lastDamageAt = match.simulationTime;
     fighter.damageNumber = {
       amount: damage,
       source,
@@ -1022,7 +1177,8 @@
     const sourceLabel = ({
       radiation: '辐射坑', cactus: '仙人掌', knife: '刀', pistol: '手枪',
       shotgun: '霰弹枪', sniper: '狙击枪', flamethrower: '喷火器', c4: 'C4 爆炸', laser: '激光',
-      zombie: '僵尸', zombieDecay: '僵尸生命流失', iceShooter: '寒冰射手', holyLightning: '神圣雷击',
+      zombie: '僵尸', zombieDecay: '僵尸生命流失', iceShooter: '寒冰射手', snowflake: '雪花',
+      skeletonArrow: '骷髅箭', holyLightning: '神圣雷击',
     })[source] || '对手';
     if (announce && shieldDamage > 0) {
       const healthText = healthDamage > 0 ? `，生命 -${formatHealthAmount(healthDamage)} HP` : '，生命未受伤';
@@ -1049,6 +1205,8 @@
     fighter.slowRemaining = 0;
     fighter.slowFactor = 1;
     fighter.zombieHealthDrainRemaining = 0;
+    fighter.skeletonHealthDrainRemaining = 0;
+    fighter.skeletonAttackCooldown = 0;
     fighter.zombieContactCooldown = 0;
     fighter.priestAttackCooldown = 0;
     fighter.adrenalineTrailCooldown = 0;
@@ -1082,15 +1240,19 @@
         });
     }
     const livingCount = match.fighters.filter((item) => !item.eliminated).length;
-    if (livingCount === 0) {
+    const livingPrimaryCount = match.fighters.filter((item) => !item.eliminated
+      && !item.isZombie && !item.isPriest && !item.isSkeleton && !item.isMechanical).length;
+    if (livingCount === 0 || livingPrimaryCount === 0) {
       match.ended = true;
       match.paused = true;
       matchState.className = 'match-state is-paused';
       matchState.querySelector('span').textContent = '本局结束';
       overlayTitle.textContent = '全员淘汰';
-      overlayMessage.textContent = source === 'radiation'
-        ? '最后一位方块也倒在了辐射坑里。'
-        : '所有方块都耗尽血量了。';
+      overlayMessage.textContent = livingCount > 0
+        ? '所有参赛方块都已淘汰，召唤物不再继续比赛。'
+        : (source === 'radiation'
+          ? '最后一位方块也倒在了辐射坑里。'
+          : '所有方块都耗尽血量了。');
       overlay.hidden = false;
       pauseButton.disabled = true;
     }
@@ -1274,6 +1436,8 @@
         maxHealth: fighter.shield.maxHealth,
       })),
       projectiles: match.projectiles.length,
+      snowflakes: match.projectiles.filter((projectile) => projectile.type === 'snowflake').length,
+      skeletonArrows: match.projectiles.filter((projectile) => projectile.type === 'skeletonArrow').length,
       flames: match.flames.length,
       lasers: match.lasers.map((laser) => ({
         owner: laser.ownerId,
@@ -1300,6 +1464,28 @@
         health: fighter.health,
         attacksRemaining: fighter.priestAttacksRemaining,
         attackCooldown: Number(fighter.priestAttackCooldown.toFixed(3)),
+        color: fighter.color,
+      })),
+      skeletons: match.fighters.filter((fighter) => fighter.isSkeleton && !fighter.eliminated).map((fighter) => ({
+        id: fighter.id,
+        summoner: fighter.summonerId,
+        damageOwner: teamOwnerIdOf(fighter),
+        health: fighter.health,
+        healthDrainRemaining: Number(fighter.skeletonHealthDrainRemaining.toFixed(3)),
+        shotCooldown: Number(fighter.skeletonAttackCooldown.toFixed(3)),
+        hatStyle: fighter.hatStyle,
+        hatColor: fighter.hatColor,
+        color: fighter.color,
+        holdingItems: fighter.heldItems.length,
+      })),
+      mechanicalBlocks: match.fighters.filter((fighter) => fighter.isMechanical && !fighter.eliminated).map((fighter) => ({
+        id: fighter.id,
+        summoner: fighter.mechanicalSummonerId,
+        health: fighter.health,
+        maxHealth: fighter.maxHealth,
+        phaseRemaining: Number(fighter.mechanicalPhaseRemaining.toFixed(3)),
+        settled: fighter.mechanicalSettled,
+        damageReadyIn: Number(Math.max(0, fighter.mechanicalDamageReadyAt - match.simulationTime).toFixed(3)),
         color: fighter.color,
       })),
       iceShooters: match.iceShooters.map((iceShooter) => ({
@@ -1376,7 +1562,8 @@
     let changed = false;
     const remaining = [];
     match.items.forEach((pickup) => {
-      const collector = match.fighters.find((fighter) => !fighter.eliminated && !fighter.isPriest
+      const collector = match.fighters.find((fighter) => !fighter.eliminated
+        && !fighter.isPriest && !fighter.isSkeleton && !fighter.isMechanical
         && Math.hypot(fighter.x - pickup.x, fighter.y - pickup.y) <= fighter.size / 2 + pickup.radius);
       if (!collector) {
         remaining.push(pickup);
@@ -1444,23 +1631,43 @@
     return Boolean(firstOwnerId && firstOwnerId === secondOwnerId);
   }
 
-  function pickHostileTarget(shooter) {
-    if (!match || !shooter || shooter.eliminated) return null;
+  function scoreHostileTarget(shooter, target, creditedOwner, reference = shooter) {
+    const distance = Math.hypot(target.x - reference.x, target.y - reference.y);
+    const cell = Math.max(1, world.cell);
+    const healthRatio = target.maxHealth > 0 ? Math.max(0, target.health / target.maxHealth) : 1;
+    const threat = Math.max(hostilityToward(creditedOwner, target), hostilityToward(shooter, target));
+    const focus = Math.max(hostilityToward(target, creditedOwner), hostilityToward(target, shooter));
+    const proximity = 1.7 / (1 + distance / (cell * 4));
+    const finishBonus = healthRatio < 0.2 ? 0.55 : 0;
+    const slowBonus = target.slowRemaining > 0 ? 0.28 : 0;
+    const shieldPenalty = target.shield ? 0.24 : 0;
+    const adrenalinePenalty = target.adrenalineRemaining > 0 ? 0.16 : 0;
+    const guardian = getMechanicalProtector(target);
+    const coverPenalty = guardian ? 0.38 : 0;
+    const guardianBonus = target.isMechanical && !target.eliminated ? 0.45 : 0;
+    const consistencyBonus = shooter.lastTargetId === target.id ? 0.12 : 0;
+    return threat * 2.8 + focus * 0.38 + (1 - healthRatio) * 0.82 + proximity
+      + finishBonus + slowBonus + guardianBonus + consistencyBonus
+      - shieldPenalty - adrenalinePenalty - coverPenalty;
+  }
+
+  function pickHostileTargets(shooter, limit = 1) {
+    if (!match || !shooter || shooter.eliminated) return [];
     const candidates = match.fighters.filter((fighter) => !fighter.eliminated && !areSummonAllies(shooter, fighter));
-    if (!candidates.length) return null;
+    if (!candidates.length) return [];
     const creditedOwner = match.fighters.find((fighter) => fighter.id === damageOwnerIdOf(shooter)) || shooter;
     const scored = candidates.map((fighter) => ({
       fighter,
-      hostility: Math.max(hostilityToward(creditedOwner, fighter), hostilityToward(shooter, fighter)),
+      score: scoreHostileTarget(shooter, fighter, creditedOwner),
       distance: Math.hypot(fighter.x - shooter.x, fighter.y - shooter.y),
     }));
-    const maxHostility = Math.max(...scored.map((entry) => entry.hostility));
-    if (maxHostility > 0.04) {
-      scored.sort((first, second) => second.hostility - first.hostility || first.distance - second.distance);
-      return scored[0].fighter;
-    }
-    scored.sort((first, second) => first.distance - second.distance);
-    return scored[0].fighter;
+    scored.sort((first, second) => second.score - first.score || first.distance - second.distance);
+    shooter.lastTargetId = scored[0].fighter.id;
+    return scored.slice(0, Math.max(1, limit)).map((entry) => entry.fighter);
+  }
+
+  function pickHostileTarget(shooter) {
+    return pickHostileTargets(shooter, 1)[0] || null;
   }
 
   function pickMostThreateningTarget(summoner, priest) {
@@ -1468,63 +1675,230 @@
     const candidates = match.fighters.filter((fighter) => !fighter.eliminated && !areSummonAllies(priest, fighter));
     if (!candidates.length) return null;
     const reference = summoner || priest;
+    const threatOwner = summoner || match.fighters.find((fighter) => fighter.id === damageOwnerIdOf(priest)) || priest;
     const scored = candidates.map((fighter) => ({
       fighter,
-      hostility: hostilityToward(summoner, fighter),
+      score: hostilityToward(threatOwner, fighter) * 3.1
+        + (1 - Math.max(0, fighter.health / Math.max(1, fighter.maxHealth))) * 0.48
+        + 1.6 / (1 + Math.hypot(fighter.x - reference.x, fighter.y - reference.y) / (world.cell * 5))
+        + (fighter.slowRemaining > 0 ? 0.2 : 0)
+        - (fighter.shield ? 0.22 : 0),
       distance: Math.hypot(fighter.x - reference.x, fighter.y - reference.y),
     }));
-    const maxHostility = Math.max(...scored.map((entry) => entry.hostility));
-    if (maxHostility > 0.04) {
-      scored.sort((first, second) => second.hostility - first.hostility || first.distance - second.distance);
-    } else {
-      scored.sort((first, second) => first.distance - second.distance);
-    }
+    scored.sort((first, second) => second.score - first.score || first.distance - second.distance);
+    priest.lastTargetId = scored[0].fighter.id;
     return scored[0].fighter;
   }
 
-  function reflectCoordinate(position, velocity, seconds, minimum, maximum) {
+  function reflectedPositionAndDirection(position, displacement, minimum, maximum) {
     const span = maximum - minimum;
-    if (span <= 0) return (minimum + maximum) / 2;
+    if (span <= 0) return { position: (minimum + maximum) / 2, direction: 1 };
     const period = span * 2;
-    const offset = ((position - minimum + velocity * seconds) % period + period) % period;
-    return minimum + (offset <= span ? offset : period - offset);
+    const offset = ((position - minimum + displacement) % period + period) % period;
+    return offset <= span
+      ? { position: minimum + offset, direction: 1 }
+      : { position: minimum + period - offset, direction: -1 };
   }
 
-  function solveInterceptTime(shooter, target, projectileSpeed) {
-    const rx = target.x - shooter.x;
-    const ry = target.y - shooter.y;
-    const vx = target.vx;
-    const vy = target.vy;
-    const a = vx * vx + vy * vy - projectileSpeed * projectileSpeed;
-    const b = 2 * (rx * vx + ry * vy);
-    const c = rx * rx + ry * ry;
-    const candidates = [];
-    if (Math.abs(a) < 1e-8) {
-      if (Math.abs(b) > 1e-8) candidates.push(-c / b);
-    } else {
-      const discriminant = b * b - 4 * a * c;
-      if (discriminant >= 0) {
-        const root = Math.sqrt(discriminant);
-        candidates.push((-b - root) / (2 * a), (-b + root) / (2 * a));
-      }
+  function integratedMovementTime(fighter, seconds) {
+    if (seconds <= 0) return 0;
+    const friction = MAP_DEFINITIONS[match.config.mapType].friction;
+    const logDrag = Math.log(Math.max(1e-8, 1 - friction));
+    const integral = (start, end) => {
+      if (friction <= 1e-10) return end - start;
+      return (Math.exp(logDrag * start * 60) - Math.exp(logDrag * end * 60)) / (-60 * logDrag);
+    };
+    const breakpoints = [0, seconds];
+    [fighter.adrenalineRemaining || 0, fighter.slowRemaining || 0].forEach((time) => {
+      if (time > 1e-6 && time < seconds - 1e-6) breakpoints.push(time);
+    });
+    breakpoints.sort((first, second) => first - second);
+    let result = 0;
+    const inRadiationSlowZone = match.config.mapType === 'nuclear' && isInRadiationSlowZone(fighter);
+    for (let index = 0; index < breakpoints.length - 1; index += 1) {
+      const start = breakpoints[index];
+      const end = breakpoints[index + 1];
+      const middle = (start + end) / 2;
+      let scale = middle < fighter.adrenalineRemaining ? ITEM_RULES.adrenalineSpeedMultiplier : 1;
+      if (middle < fighter.slowRemaining) scale *= fighter.slowFactor || 1;
+      if (inRadiationSlowZone) scale *= 0.5;
+      result += integral(start, end) * scale;
     }
-    const positive = candidates.filter((time) => Number.isFinite(time) && time > 0);
-    return positive.length ? Math.min(...positive) : Math.sqrt(c) / Math.max(1, projectileSpeed);
+    return result;
+  }
+
+  function predictLinearFighterState(fighter, seconds) {
+    const bounds = nearestWallBounds(fighter);
+    const travelTime = integratedMovementTime(fighter, seconds);
+    const xResult = reflectedPositionAndDirection(fighter.x, fighter.vx * travelTime, bounds.minX, bounds.maxX);
+    const yResult = reflectedPositionAndDirection(fighter.y, fighter.vy * travelTime, bounds.minY, bounds.maxY);
+    const friction = MAP_DEFINITIONS[match.config.mapType].friction;
+    const drag = Math.pow(1 - friction, seconds * 60);
+    return {
+      x: xResult.position,
+      y: yResult.position,
+      vx: fighter.vx * drag * xResult.direction,
+      vy: fighter.vy * drag * yResult.direction,
+    };
+  }
+
+  function boostPredictedVelocity(state, collisionType) {
+    if (!match.config.collisionAcceleration) return;
+    const factor = collisionType === 'block' ? 1.085 : (collisionType === 'obstacle' ? 1.065 : 1.045);
+    const speed = Math.hypot(state.vx, state.vy);
+    if (speed <= 0) return;
+    const maximum = world.cell * (match.config.blockCount > 24 ? 4.8 : 5.5) * match.config.speedMultiplier;
+    const scale = Math.min(factor, maximum / speed);
+    state.vx *= scale;
+    state.vy *= scale;
+  }
+
+  function predictedPairKey(first, second) {
+    const firstIndex = match.fighters.indexOf(first);
+    const secondIndex = match.fighters.indexOf(second);
+    return firstIndex <= secondIndex ? `${first.id}:${second.id}` : `${second.id}:${first.id}`;
+  }
+
+  function predictTargetTrajectory(target) {
+    if (!match.predictionCache) match.predictionCache = new Map();
+    const cached = match.predictionCache.get(target.id);
+    if (cached) return cached;
+
+    const step = 0.04;
+    const duration = ITEM_RULES.projectileLifetime;
+    const state = { x: target.x, y: target.y, vx: target.vx, vy: target.vy, size: target.size, id: target.id };
+    const bounds = nearestWallBounds(target);
+    const obstacles = [...match.obstacles.filter((obstacle) => !obstacle.destroyed), ...match.cementWalls];
+    const obstacleHealth = new Map(match.obstacles.map((obstacle) => [obstacle.id, obstacle.health]));
+    const destroyedObstacles = new Set();
+    const obstacleCooldowns = new Map(obstacles.map((obstacle) => [
+      obstacle.id,
+      match.obstacleCooldowns.get(`${target.id}:${obstacle.id}`) || 0,
+    ]));
+    const pairCooldowns = new Map(match.fighters
+      .filter((fighter) => fighter.id !== target.id)
+      .map((fighter) => [predictedPairKey(target, fighter), match.pairCooldowns.get(predictedPairKey(target, fighter)) || 0]));
+    const trajectory = [{ time: 0, x: target.x, y: target.y }];
+    const friction = MAP_DEFINITIONS[match.config.mapType].friction;
+    const drag = Math.pow(1 - friction, step * 60);
+
+    const resolveBounds = () => {
+      let hit = false;
+      if (state.x < bounds.minX) { state.x = bounds.minX; if (state.vx < 0) { state.vx = Math.abs(state.vx); hit = true; } }
+      else if (state.x > bounds.maxX) { state.x = bounds.maxX; if (state.vx > 0) { state.vx = -Math.abs(state.vx); hit = true; } }
+      if (state.y < bounds.minY) { state.y = bounds.minY; if (state.vy < 0) { state.vy = Math.abs(state.vy); hit = true; } }
+      else if (state.y > bounds.maxY) { state.y = bounds.maxY; if (state.vy > 0) { state.vy = -Math.abs(state.vy); hit = true; } }
+      if (hit) boostPredictedVelocity(state, 'wall');
+    };
+
+    for (let elapsed = 0; elapsed < duration - 1e-6; elapsed += step) {
+      const dt = Math.min(step, duration - elapsed);
+      let movementScale = 1;
+      if (target.adrenalineRemaining > elapsed) movementScale *= ITEM_RULES.adrenalineSpeedMultiplier;
+      if (target.slowRemaining > elapsed) movementScale *= target.slowFactor || 1;
+      if (match.config.mapType === 'nuclear'
+        && match.radiationPits.some((pit) => obstacleOverlaps(state.x, state.y, state.size, pit))) movementScale *= 0.5;
+      state.x += state.vx * dt * movementScale;
+      state.y += state.vy * dt * movementScale;
+      state.vx *= drag;
+      state.vy *= drag;
+      resolveBounds();
+
+      obstacleCooldowns.forEach((time, id) => obstacleCooldowns.set(id, Math.max(0, time - dt)));
+      pairCooldowns.forEach((time, id) => pairCooldowns.set(id, Math.max(0, time - dt)));
+      for (let pass = 0; pass < 2; pass += 1) {
+        obstacles.forEach((obstacle) => {
+          if (destroyedObstacles.has(obstacle.id)) return;
+          const overlapX = state.size / 2 + obstacle.width / 2 - Math.abs(state.x - obstacle.x);
+          const overlapY = state.size / 2 + obstacle.height / 2 - Math.abs(state.y - obstacle.y);
+          if (overlapX <= 0 || overlapY <= 0) return;
+          const normal = obstacleNormal(state, obstacle, overlapX, overlapY);
+          const impactSpeed = Math.abs(normal.axis === 'x' ? state.vx : state.vy);
+          const incoming = normal.axis === 'x' ? state.vx * normal.sign < 0 : state.vy * normal.sign < 0;
+          const overlap = (normal.axis === 'x' ? overlapX : overlapY) + 0.15;
+          if (normal.axis === 'x') {
+            state.x += normal.sign * overlap;
+            if (incoming) state.vx = -state.vx;
+          } else {
+            state.y += normal.sign * overlap;
+            if (incoming) state.vy = -state.vy;
+          }
+          if (!incoming || (obstacleCooldowns.get(obstacle.id) || 0) > 0) return;
+          obstacleCooldowns.set(obstacle.id, 0.32);
+          boostPredictedVelocity(state, 'obstacle');
+          if (!obstacle.indestructible) {
+            const damage = Math.max(1, Math.round((impactSpeed / Math.max(1, world.cell)) * 10));
+            const health = Math.max(0, (obstacleHealth.get(obstacle.id) || 0) - damage);
+            obstacleHealth.set(obstacle.id, health);
+            if (health <= 0) destroyedObstacles.add(obstacle.id);
+          }
+        });
+
+        match.fighters.forEach((other) => {
+          if (other.id === target.id || other.eliminated) return;
+          const otherState = predictLinearFighterState(other, elapsed + dt);
+          const overlapX = (state.size + other.size) / 2 - Math.abs(otherState.x - state.x);
+          const overlapY = (state.size + other.size) / 2 - Math.abs(otherState.y - state.y);
+          if (overlapX <= 0 || overlapY <= 0) return;
+          let axis;
+          let sign;
+          if (overlapX < overlapY) {
+            axis = 'x';
+            sign = Math.abs(otherState.x - state.x) > 0.001
+              ? Math.sign(otherState.x - state.x)
+              : (otherState.vx - state.vx <= 0 ? 1 : -1);
+          } else {
+            axis = 'y';
+            sign = Math.abs(otherState.y - state.y) > 0.001
+              ? Math.sign(otherState.y - state.y)
+              : (otherState.vy - state.vy <= 0 ? 1 : -1);
+          }
+          const overlap = (axis === 'x' ? overlapX : overlapY) + 0.15;
+          if (axis === 'x') state.x -= sign * overlap * 0.5;
+          else state.y -= sign * overlap * 0.5;
+          const relativeSpeed = axis === 'x'
+            ? (otherState.vx - state.vx) * sign
+            : (otherState.vy - state.vy) * sign;
+          if (relativeSpeed >= 0) return;
+          if (axis === 'x') state.vx = otherState.vx;
+          else state.vy = otherState.vy;
+          const cooldownKey = predictedPairKey(target, other);
+          if ((pairCooldowns.get(cooldownKey) || 0) <= 0) {
+            pairCooldowns.set(cooldownKey, 0.28);
+            boostPredictedVelocity(state, 'block');
+          }
+        });
+        resolveBounds();
+      }
+      trajectory.push({ time: Math.min(duration, elapsed + dt), x: state.x, y: state.y });
+    }
+    match.predictionCache.set(target.id, trajectory);
+    return trajectory;
   }
 
   function predictInterceptPoint(shooter, target, projectileSpeed) {
-    const maxPredictionTime = ITEM_RULES.projectileLifetime;
-    let time = Math.min(maxPredictionTime, solveInterceptTime(shooter, target, projectileSpeed));
-    const bounds = nearestWallBounds(target);
-    let predicted = { x: target.x, y: target.y };
-    for (let iteration = 0; iteration < 4; iteration += 1) {
-      predicted = {
-        x: reflectCoordinate(target.x, target.vx, time, bounds.minX, bounds.maxX),
-        y: reflectCoordinate(target.y, target.vy, time, bounds.minY, bounds.maxY),
-      };
-      time = Math.min(maxPredictionTime, Math.hypot(predicted.x - shooter.x, predicted.y - shooter.y) / Math.max(1, projectileSpeed));
+    const trajectory = predictTargetTrajectory(target);
+    const hitRadius = target.size / 2 + Math.max(2, world.cell * 0.06);
+    let previous = trajectory[0];
+    let previousGap = Math.hypot(previous.x - shooter.x, previous.y - shooter.y) - hitRadius;
+    let best = previous;
+    let bestGap = previousGap;
+    for (let index = 1; index < trajectory.length; index += 1) {
+      const point = trajectory[index];
+      const gap = Math.hypot(point.x - shooter.x, point.y - shooter.y) - projectileSpeed * point.time - hitRadius;
+      if (gap < bestGap) { best = point; bestGap = gap; }
+      if (gap <= 0) {
+        const denominator = previousGap - gap;
+        const fraction = denominator > 1e-8 ? Math.max(0, Math.min(1, previousGap / denominator)) : 1;
+        return {
+          x: previous.x + (point.x - previous.x) * fraction,
+          y: previous.y + (point.y - previous.y) * fraction,
+        };
+      }
+      previous = point;
+      previousGap = gap;
     }
-    return predicted;
+    return { x: best.x, y: best.y };
   }
 
   function useCooldownReady() {
@@ -1533,7 +1907,7 @@
 
   function fireProjectile(owner, type, target, angle, damage, speed, origin = null) {
     if (!target || target.eliminated || owner.eliminated) return false;
-    const definition = ITEM_DEFINITIONS[type];
+    const definition = ITEM_DEFINITIONS[type] || null;
     const originX = Number.isFinite(origin?.x) ? origin.x : owner.x;
     const originY = Number.isFinite(origin?.y) ? origin.y : owner.y;
     const nose = origin ? 0 : owner.size * 0.52 + 4;
@@ -1547,10 +1921,13 @@
       y: originY + Math.sin(angle) * nose,
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
-      radius: Math.max(2.2, world.cell * (type === 'sniper' ? 0.075 : (type === 'iceShooter' ? 0.09 : 0.06))),
+      radius: Math.max(2.2, world.cell * (type === 'sniper' ? 0.075
+        : (type === 'iceShooter' ? 0.09 : (type === 'snowflake' ? 0.085 : (type === 'skeletonArrow' ? 0.055 : 0.06))))),
       damage,
       life: ITEM_RULES.projectileLifetime,
-      color: owner.isZombie ? owner.color : definition.color,
+      color: type === 'snowflake' || type === 'skeletonArrow' || owner.isZombie
+        ? owner.color
+        : (definition?.color || owner.color),
     });
     return true;
   }
@@ -1591,7 +1968,7 @@
   }
 
   function summonZombies(owner) {
-    if (!owner || owner.eliminated || owner.isPriest) return false;
+    if (!owner || owner.eliminated || owner.isPriest || owner.isSkeleton || owner.isMechanical) return false;
     const summoned = [];
     for (let index = 0; index < ITEM_RULES.zombieCount; index += 1) {
       const zombie = createZombie(owner, index);
@@ -1607,7 +1984,7 @@
   }
 
   function summonPriest(owner) {
-    if (!owner || owner.eliminated || owner.isPriest) return false;
+    if (!owner || owner.eliminated || owner.isPriest || owner.isSkeleton || owner.isMechanical) return false;
     const priest = createPriest(owner);
     match.fighters.push(priest);
     createRosterChip(priest);
@@ -1615,6 +1992,70 @@
     addBurst(priest.x, priest.y, ['#fff7cf', priest.color, '#ffffff'], 14);
     addEvent(`${owner.name} 召唤了 50 HP 神父方块`, ITEM_DEFINITIONS.holyStaff.color);
     showToast(`${owner.name} 召来神父守护！`);
+    return true;
+  }
+
+  function summonSkeletons(owner) {
+    if (!owner || owner.eliminated || owner.isPriest || owner.isSkeleton || owner.isMechanical) return false;
+    const skeletons = [];
+    for (let index = 0; index < ITEM_RULES.skeletonCount; index += 1) {
+      const skeleton = createSkeleton(owner, index);
+      match.fighters.push(skeleton);
+      createRosterChip(skeleton);
+      skeletons.push(skeleton);
+    }
+    syncHud();
+    skeletons.forEach((skeleton) => addBurst(skeleton.x, skeleton.y, [skeleton.color, '#f1f1da', '#ffffff'], 9));
+    addEvent(`${owner.name} 召唤了 3 个带弓骷髅（每只 50 HP）`, ITEM_DEFINITIONS.skeletonStaff.color);
+    showToast(`${owner.name} 的骷髅弓手加入战斗！`);
+    return true;
+  }
+
+  function summonMechanicalBlock(owner) {
+    if (!owner || owner.eliminated || owner.isPriest || owner.isSkeleton || owner.isMechanical) return false;
+    const alreadyExists = match.fighters.some((fighter) => fighter.isMechanical
+      && fighter.mechanicalSummonerId === owner.id && !fighter.eliminated);
+    if (alreadyExists) return false;
+    const machine = createMechanicalBlock(owner);
+    match.fighters.push(machine);
+    createRosterChip(machine);
+    syncHud();
+    addBurst(machine.x, machine.y, [machine.color, '#d8fff6', '#ffffff'], 12);
+    addEvent(`${owner.name} 召出机械护卫（10 秒后转为 200 HP）`, machine.color);
+    showToast(`${owner.name} 的机械方块开始护卫！`);
+    return true;
+  }
+
+  function launchSnowflakeBarrage(owner) {
+    if (!owner || owner.eliminated) return false;
+    const targets = pickHostileTargets(owner, 3);
+    if (!targets.length) return false;
+    const count = ITEM_RULES.snowflakeCount;
+    const weights = targets.length === 1 ? [1] : (targets.length === 2 ? [0.7, 0.3] : [0.6, 0.25, 0.15]);
+    const quotas = targets.map((_target, index) => index === targets.length - 1
+      ? count - targets.slice(0, index).reduce((total, _entry, targetIndex) => total + Math.round(count * weights[targetIndex]), 0)
+      : Math.round(count * weights[index]));
+    const speed = world.cell * ITEM_RULES.snowflakeSpeedCellsPerSecond;
+    targets.forEach((target, targetIndex) => {
+      const aimPoint = predictInterceptPoint(owner, target, speed);
+      const baseAngle = Math.atan2(aimPoint.y - owner.y, aimPoint.x - owner.x);
+      const quota = quotas[targetIndex];
+      for (let index = 0; index < quota; index += 1) {
+        const row = quota <= 1 ? 0 : index / (quota - 1) - 0.5;
+        const jitter = (Math.random() - 0.5) * 0.018;
+        fireProjectile(
+          owner,
+          'snowflake',
+          target,
+          baseAngle + row * ITEM_RULES.snowflakeSpreadRadians + jitter,
+          ITEM_RULES.snowflakeDamage,
+          speed,
+        );
+      }
+    });
+    addBurst(owner.x, owner.y, [owner.color, '#e6fbff', '#ffffff'], 18);
+    addEvent(`${owner.name} 引发雪花风暴（100 枚，命中减速 1 秒）`, owner.color);
+    showToast(`${owner.name} 撒下了一场雪花风暴！`);
     return true;
   }
 
@@ -1713,7 +2154,7 @@
   }
 
   function plantC4(owner, target) {
-    if (!owner || !target || owner.id === target.id || target.eliminated) return false;
+    if (!owner || !target || !isValidHostileTarget(owner, target)) return false;
     const effectColor = owner.isZombie ? owner.color : ITEM_DEFINITIONS.c4.color;
     match.c4Charges.push({
       id: `c4-${match.nextItemId++}`,
@@ -1733,13 +2174,14 @@
   }
 
   function activateHeldItem(owner, item, target = null) {
-    if (!match || !owner || owner.eliminated || !item || !useCooldownReady()) return false;
+    if (!match || !owner || owner.eliminated || owner.isPriest || owner.isSkeleton || owner.isMechanical
+      || !item || !useCooldownReady()) return false;
     const definition = ITEM_DEFINITIONS[item.type];
     if (!definition) return false;
     let used = false;
 
     if (item.type === 'knife') {
-      if (!target || target.eliminated || target.id === owner.id) return false;
+      if (!isValidHostileTarget(owner, target)) return false;
       const damage = applyDamage(target, ITEM_RULES.knifeDamage, 'knife', true, damageOwnerIdOf(owner));
       addBurst(target.x, target.y, [owner.color, definition.color, '#ffffff'], 7);
       addEvent(`${owner.name} 用刀碰中 ${target.name}（-${damage} HP）`, definition.color);
@@ -1748,7 +2190,7 @@
     } else if (item.type === 'c4') {
       used = plantC4(owner, target);
     } else if (item.type === 'flamethrower') {
-      const enemy = pickHostileTarget(owner);
+      const enemy = isValidHostileTarget(owner, target) ? target : pickHostileTarget(owner);
       if (!enemy) return false;
       used = startFlamethrower(owner, enemy);
       if (used) {
@@ -1756,7 +2198,7 @@
         showToast(`${owner.name} 开始喷火！`);
       }
     } else if (item.type === 'laser') {
-      const enemy = pickHostileTarget(owner);
+      const enemy = isValidHostileTarget(owner, target) ? target : pickHostileTarget(owner);
       if (!enemy) return false;
       used = startLaser(owner, enemy);
       if (used) {
@@ -1773,8 +2215,14 @@
       used = deployIceShooter(owner);
     } else if (item.type === 'cement') {
       used = deployCementWalls(owner);
+    } else if (item.type === 'snowflake') {
+      used = launchSnowflakeBarrage(owner);
+    } else if (item.type === 'skeletonStaff') {
+      used = summonSkeletons(owner);
+    } else if (item.type === 'mechanicalBlock') {
+      used = summonMechanicalBlock(owner);
     } else {
-      const enemy = pickHostileTarget(owner);
+      const enemy = isValidHostileTarget(owner, target) ? target : pickHostileTarget(owner);
       if (!enemy) return false;
       const speed = world.cell * (item.type === 'sniper'
         ? ITEM_RULES.sniperBulletCellsPerSecond
@@ -1804,18 +2252,90 @@
     return true;
   }
 
+  function isValidHostileTarget(owner, target) {
+    return Boolean(owner && target && !owner.eliminated && !target.eliminated && !areSummonAllies(owner, target));
+  }
+
+  function itemUsePlan(owner, item) {
+    if (!match || !owner || owner.eliminated || owner.isMechanical || owner.isSkeleton || owner.isPriest) return null;
+    const targets = pickHostileTargets(owner, 3);
+    const target = targets[0] || null;
+    if (!target) return null;
+    const hostiles = match.fighters.filter((fighter) => !fighter.eliminated && !areSummonAllies(owner, fighter));
+    const nearestDistance = hostiles.reduce((best, fighter) => Math.min(best, Math.hypot(fighter.x - owner.x, fighter.y - owner.y)), Infinity);
+    const healthRatio = owner.health / Math.max(1, owner.maxHealth);
+    const rootOwner = match.fighters.find((fighter) => fighter.id === damageOwnerIdOf(owner)) || owner;
+    const threat = Math.max(hostilityToward(owner, target), hostilityToward(rootOwner, target));
+    const recentlyHit = match.simulationTime - owner.lastDamageAt <= 1.1;
+    const closeness = Math.max(0, 1 - nearestDistance / (world.cell * 8));
+    const danger = (1 - Math.max(0, healthRatio)) * 4.4 + (recentlyHit ? 2.2 : 0) + closeness * 2.1 + threat * 0.35;
+    const score = (value, extra = 0) => ({ score: value + extra, target });
+
+    if (item.type === 'adrenaline') {
+      if (owner.adrenalineRemaining > 0.25) return null;
+      return healthRatio <= 0.82 || recentlyHit || nearestDistance <= world.cell * 4.8
+        ? score(4.7, danger)
+        : null;
+    }
+    if (item.type === 'mechanicalBlock') {
+      if (getMechanicalProtector(owner)) return null;
+      return healthRatio <= 0.88 || recentlyHit || nearestDistance <= world.cell * 7
+        ? score(5.5, danger)
+        : null;
+    }
+    if (item.type === 'cement') {
+      const hasWalls = match.cementWalls.some((wall) => wall.teamOwnerId === teamOwnerIdOf(owner));
+      return !hasWalls && (healthRatio <= 0.62 || recentlyHit || nearestDistance <= world.cell * 5.5)
+        ? score(4.2, danger)
+        : null;
+    }
+    if (item.type === 'wand') return score(2.8, Math.max(0, 1 - teamMinionCount(owner, 'isZombie') / 9) * 0.6);
+    if (item.type === 'holyStaff') {
+      return match.fighters.some((fighter) => fighter.isPriest && !fighter.eliminated && fighter.summonerId === owner.id)
+        ? null
+        : score(3.6, danger * 0.18);
+    }
+    if (item.type === 'skeletonStaff') {
+      return match.fighters.some((fighter) => fighter.isSkeleton && !fighter.eliminated && fighter.summonerId === owner.id)
+        ? null
+        : score(3.9, danger * 0.2);
+    }
+    if (item.type === 'snowflake') return score(4.1, Math.min(1.2, (hostiles.length - 1) * 0.22) + threat * 0.15);
+    if (item.type === 'iceShooter') {
+      if (match.iceShooters.some((shooter) => shooter.ownerId === owner.id)) return null;
+      return nearestDistance <= world.cell * 13 ? score(4.3, closeness * 0.7 + threat * 0.12) : null;
+    }
+    if (item.type === 'flamethrower') {
+      const usefulRange = world.cell * ITEM_RULES.flamethrowerRangeCells * 1.4;
+      return nearestDistance <= usefulRange ? score(5.1, closeness + threat * 0.2) : null;
+    }
+    if (item.type === 'shotgun') {
+      return nearestDistance <= world.cell * 9 ? score(4.4, closeness + threat * 0.18) : null;
+    }
+    if (item.type === 'laser') return score(5.1, threat * 0.22 + closeness * 0.35);
+    return score(3.7, threat * 0.2 + closeness * 0.25);
+  }
+
+  function teamMinionCount(owner, flag) {
+    const ownerTeam = teamOwnerIdOf(owner);
+    return match.fighters.filter((fighter) => fighter[flag] && !fighter.eliminated && teamOwnerIdOf(fighter) === ownerTeam).length;
+  }
+
   function tryAutoUseRangedItems() {
     if (!match || !useCooldownReady()) return false;
     const candidates = [];
     match.fighters.forEach((fighter) => {
-      if (fighter.eliminated) return;
+      if (fighter.eliminated || fighter.isMechanical || fighter.isSkeleton || fighter.isPriest) return;
       fighter.heldItems.forEach((item) => {
-        if (ITEM_DEFINITIONS[item.type]?.group === 'ranged') candidates.push({ fighter, item });
+        if (ITEM_DEFINITIONS[item.type]?.group !== 'ranged') return;
+        const plan = itemUsePlan(fighter, item);
+        if (plan) candidates.push({ fighter, item, plan });
       });
     });
-    candidates.sort((first, second) => first.item.acquiredAt - second.item.acquiredAt);
+    candidates.sort((first, second) => second.plan.score - first.plan.score
+      || first.item.acquiredAt - second.item.acquiredAt);
     for (const candidate of candidates) {
-      if (activateHeldItem(candidate.fighter, candidate.item)) return true;
+      if (activateHeldItem(candidate.fighter, candidate.item, candidate.plan.target)) return true;
     }
     return false;
   }
@@ -1827,7 +2347,7 @@
     if (!first || !second || !useCooldownReady()) return;
     const contactPairs = [[first, second], [second, first]];
     for (const [owner, target] of contactPairs) {
-      if (owner.eliminated || target.eliminated) continue;
+      if (owner.eliminated || target.eliminated || areSummonAllies(owner, target)) continue;
       const heldItem = owner.heldItems
         .filter((item) => ITEM_DEFINITIONS[item.type]?.group === 'contact')
         .sort((a, b) => a.acquiredAt - b.acquiredAt)[0];
@@ -1948,11 +2468,19 @@
         );
         match.projectileHits += 1;
         addBurst(projectile.x, projectile.y, [projectile.color, hitTarget.color, '#ffffff'], 7);
-        if (projectile.type === 'iceShooter' && !hitTarget.eliminated) {
-          applySlow(hitTarget, ITEM_RULES.iceSlowDuration, ITEM_RULES.iceSlowFactor);
-          addEvent(`${hitTarget.name} 被冰豌豆命中（-${formatHealthAmount(damage)} HP，减速 50%）`, projectile.color);
+        if ((projectile.type === 'iceShooter' || projectile.type === 'snowflake') && !hitTarget.eliminated) {
+          const duration = projectile.type === 'snowflake' ? ITEM_RULES.snowflakeSlowDuration : ITEM_RULES.iceSlowDuration;
+          const factor = projectile.type === 'snowflake' ? ITEM_RULES.snowflakeSlowFactor : ITEM_RULES.iceSlowFactor;
+          applySlow(hitTarget, duration, factor);
+          if (projectile.type === 'snowflake') match.snowflakeHits += 1;
+          const sourceName = projectile.type === 'snowflake' ? '雪花' : '冰豌豆';
+          addEvent(`${hitTarget.name} 被${sourceName}命中（-${formatHealthAmount(damage)} HP，减速 ${duration} 秒）`, projectile.color);
         } else {
-          addEvent(`${hitTarget.name} 被${ITEM_DEFINITIONS[projectile.type].name}命中（-${formatHealthAmount(damage)} HP）`, projectile.color);
+          const projectileName = ITEM_DEFINITIONS[projectile.type]?.name
+            || ({ skeletonArrow: '骷髅箭' })[projectile.type]
+            || '弹丸';
+          if (projectile.type === 'skeletonArrow') match.skeletonArrowsHit += 1;
+          addEvent(`${hitTarget.name} 被${projectileName}命中（-${formatHealthAmount(damage)} HP）`, projectile.color);
         }
         return;
       }
@@ -2505,6 +3033,90 @@
       ctx.fillStyle = '#fffdfa';
       drawStar(0, -10, 2.5, 1, 4);
       ctx.restore();
+    } else if (type === 'snowflake') {
+      ctx.save();
+      ctx.rotate(time * 0.0015);
+      ctx.strokeStyle = color;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 5;
+      ctx.lineWidth = 2.1;
+      for (let arm = 0; arm < 6; arm += 1) {
+        const angle = arm * Math.PI / 3;
+        const x = Math.cos(angle);
+        const y = Math.sin(angle);
+        ctx.beginPath();
+        ctx.moveTo(-x * 9, -y * 9);
+        ctx.lineTo(x * 9, y * 9);
+        ctx.moveTo(x * 4, y * 4);
+        ctx.lineTo(x * 2 - y * 3, y * 2 + x * 3);
+        ctx.moveTo(x * 4, y * 4);
+        ctx.lineTo(x * 2 + y * 3, y * 2 - x * 3);
+        ctx.stroke();
+      }
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(0, 0, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    } else if (type === 'skeletonStaff') {
+      ctx.save();
+      ctx.rotate(-0.48);
+      ctx.strokeStyle = '#654a3f';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(0, 13);
+      ctx.lineTo(0, -7);
+      ctx.stroke();
+      ctx.strokeStyle = '#e9dfc9';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(-1, 8);
+      ctx.lineTo(-1, -5);
+      ctx.stroke();
+      ctx.fillStyle = '#eee9d9';
+      ctx.strokeStyle = '#4a4350';
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.arc(0, -10, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#302d3b';
+      ctx.beginPath();
+      ctx.arc(-2, -11, 1.3, 0, Math.PI * 2);
+      ctx.arc(2, -11, 1.3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(-5, -16);
+      ctx.lineTo(0, -19);
+      ctx.lineTo(5, -16);
+      ctx.stroke();
+      ctx.restore();
+    } else if (type === 'mechanicalBlock') {
+      ctx.fillStyle = '#32475a';
+      ctx.strokeStyle = '#effffb';
+      ctx.lineWidth = 1.5;
+      roundedRect(-10, -10, 20, 20, 4);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = color;
+      roundedRect(-6, -6, 12, 12, 2);
+      ctx.fill();
+      ctx.strokeStyle = '#e8fff8';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(0, 0, 3.5, 0, Math.PI * 2);
+      ctx.moveTo(-13, -4);
+      ctx.lineTo(-9, -4);
+      ctx.moveTo(9, 4);
+      ctx.lineTo(13, 4);
+      ctx.moveTo(4, -13);
+      ctx.lineTo(4, -9);
+      ctx.moveTo(-4, 9);
+      ctx.lineTo(-4, 13);
+      ctx.stroke();
     } else if (type === 'adrenaline') {
       ctx.save();
       ctx.rotate(-0.25);
@@ -2684,14 +3296,50 @@
       ctx.lineCap = 'round';
       ctx.shadowColor = projectile.color;
       ctx.shadowBlur = 8;
-      ctx.beginPath();
-      ctx.moveTo(projectile.x - projectile.vx * 0.025, projectile.y - projectile.vy * 0.025);
-      ctx.lineTo(projectile.x, projectile.y);
-      ctx.stroke();
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath();
-      ctx.arc(projectile.x, projectile.y, Math.max(1.6, projectile.radius * 0.5), 0, Math.PI * 2);
-      ctx.fill();
+      if (projectile.type === 'snowflake') {
+        ctx.translate(projectile.x, projectile.y);
+        ctx.rotate(time * 0.003 + projectile.id.length);
+        ctx.lineWidth = Math.max(1.2, projectile.radius * 0.34);
+        for (let arm = 0; arm < 6; arm += 1) {
+          const angle = arm * Math.PI / 3;
+          const x = Math.cos(angle);
+          const y = Math.sin(angle);
+          ctx.beginPath();
+          ctx.moveTo(-x * projectile.radius, -y * projectile.radius);
+          ctx.lineTo(x * projectile.radius, y * projectile.radius);
+          ctx.moveTo(x * projectile.radius * 0.42, y * projectile.radius * 0.42);
+          ctx.lineTo(x * projectile.radius * 0.18 - y * projectile.radius * 0.24, y * projectile.radius * 0.18 + x * projectile.radius * 0.24);
+          ctx.moveTo(x * projectile.radius * 0.42, y * projectile.radius * 0.42);
+          ctx.lineTo(x * projectile.radius * 0.18 + y * projectile.radius * 0.24, y * projectile.radius * 0.18 - x * projectile.radius * 0.24);
+          ctx.stroke();
+        }
+      } else if (projectile.type === 'skeletonArrow') {
+        ctx.translate(projectile.x, projectile.y);
+        ctx.rotate(Math.atan2(projectile.vy, projectile.vx));
+        ctx.lineWidth = Math.max(1.4, projectile.radius * 0.6);
+        ctx.strokeStyle = '#f2e9d5';
+        ctx.beginPath();
+        ctx.moveTo(-projectile.radius * 2, 0);
+        ctx.lineTo(projectile.radius * 2.5, 0);
+        ctx.moveTo(-projectile.radius * 1.4, -projectile.radius * 0.8);
+        ctx.lineTo(-projectile.radius * 2, 0);
+        ctx.lineTo(-projectile.radius * 1.4, projectile.radius * 0.8);
+        ctx.stroke();
+        ctx.strokeStyle = projectile.color;
+        ctx.beginPath();
+        ctx.moveTo(-projectile.radius * 2, 0);
+        ctx.lineTo(-projectile.radius * 3, 0);
+        ctx.stroke();
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(projectile.x - projectile.vx * 0.025, projectile.y - projectile.vy * 0.025);
+        ctx.lineTo(projectile.x, projectile.y);
+        ctx.stroke();
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(projectile.x, projectile.y, Math.max(1.6, projectile.radius * 0.5), 0, Math.PI * 2);
+        ctx.fill();
+      }
       ctx.restore();
     });
 
@@ -2885,6 +3533,40 @@
     });
   }
 
+  function updateSkeletons(dt) {
+    if (!match || match.ended) return;
+    match.fighters.filter((fighter) => fighter.isSkeleton && !fighter.eliminated).forEach((skeleton) => {
+      skeleton.skeletonAttackCooldown = Math.max(0, skeleton.skeletonAttackCooldown - dt);
+      if (skeleton.skeletonAttackCooldown > 1e-6) return;
+      const target = pickHostileTarget(skeleton);
+      if (!target) {
+        skeleton.skeletonAttackCooldown = 0.24;
+        return;
+      }
+      const speed = world.cell * ITEM_RULES.skeletonArrowCellsPerSecond;
+      const aimPoint = predictInterceptPoint(skeleton, target, speed);
+      const angle = Math.atan2(aimPoint.y - skeleton.y, aimPoint.x - skeleton.x);
+      if (fireProjectile(skeleton, 'skeletonArrow', target, angle, ITEM_RULES.skeletonArrowDamage, speed)) {
+        skeleton.targetId = target.id;
+        match.skeletonArrowsFired += 1;
+        addEvent(`${skeleton.name} 预判 ${target.name} 射出骷髅箭（5 HP）`, skeleton.color);
+      }
+      skeleton.skeletonAttackCooldown = ITEM_RULES.skeletonShotInterval;
+    });
+  }
+
+  function updateMechanicalPhase(fighter, dt) {
+    if (!fighter.isMechanical || fighter.eliminated || fighter.mechanicalSettled) return;
+    fighter.mechanicalPhaseRemaining = Math.max(0, fighter.mechanicalPhaseRemaining - dt);
+    if (fighter.mechanicalPhaseRemaining > 1e-6) return;
+    fighter.mechanicalSettled = true;
+    fighter.maxHealth = ITEM_RULES.mechanicalBlockPermanentHealth;
+    fighter.health = ITEM_RULES.mechanicalBlockPermanentHealth;
+    fighter.idle = '机械护卫 · 永久驻场';
+    addEvent(`${fighter.name} 装甲计时结束，耐久固定为 200 HP`, fighter.color);
+    syncHud();
+  }
+
   function update(dt) {
     if (!match) return;
     if (match.paused) {
@@ -2895,6 +3577,7 @@
       return;
     }
     match.simulationTime += dt;
+    match.predictionCache.clear();
     decrementCooldowns(match.pairCooldowns, dt);
     decrementCooldowns(match.obstacleCooldowns, dt);
     decrementCooldowns(match.cactusDamageCooldowns, dt);
@@ -2909,12 +3592,21 @@
         fighter.damageNumber.remaining = Math.max(0, fighter.damageNumber.remaining - dt);
         if (fighter.damageNumber.remaining <= 0) fighter.damageNumber = null;
       }
+      updateMechanicalPhase(fighter, dt);
       if (fighter.isZombie) {
         fighter.zombieContactCooldown = Math.max(0, fighter.zombieContactCooldown - dt);
         fighter.zombieHealthDrainRemaining = Math.max(0, fighter.zombieHealthDrainRemaining - dt);
         while (fighter.zombieHealthDrainRemaining <= 1e-6 && !fighter.eliminated) {
           applyDamage(fighter, ITEM_RULES.zombieHealthDrain, 'zombieDecay', false);
           if (!fighter.eliminated) fighter.zombieHealthDrainRemaining += ITEM_RULES.zombieHealthDrainInterval;
+        }
+        if (fighter.eliminated) return;
+      }
+      if (fighter.isSkeleton) {
+        fighter.skeletonHealthDrainRemaining = Math.max(0, fighter.skeletonHealthDrainRemaining - dt);
+        while (fighter.skeletonHealthDrainRemaining <= 1e-6 && !fighter.eliminated) {
+          applyDamage(fighter, ITEM_RULES.skeletonHealthDrain, 'skeletonDecay', false);
+          if (!fighter.eliminated) fighter.skeletonHealthDrainRemaining += ITEM_RULES.skeletonHealthDrainInterval;
         }
         if (fighter.eliminated) return;
       }
@@ -2960,6 +3652,7 @@
     }
     match.obstacles = match.obstacles.filter((obstacle) => !obstacle.destroyed);
     updatePriests(dt);
+    updateSkeletons(dt);
     updateEffects(dt);
     ITEM_SYSTEM_API.update(dt, match);
 
@@ -3466,6 +4159,194 @@
     ctx.fill();
   }
 
+  function drawHat(fighter, size) {
+    if (!fighter.hatStyle) return;
+    const color = fighter.hatColor || fighter.color;
+    ctx.save();
+    ctx.translate(0, -size * 0.465);
+    ctx.lineWidth = Math.max(1, size * 0.035);
+    ctx.strokeStyle = 'rgba(25, 34, 52, 0.78)';
+    ctx.fillStyle = color;
+    if (fighter.hatStyle === 'crown') {
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.33, size * 0.055);
+      ctx.lineTo(-size * 0.3, -size * 0.18);
+      ctx.lineTo(-size * 0.12, -size * 0.055);
+      ctx.lineTo(0, -size * 0.24);
+      ctx.lineTo(size * 0.13, -size * 0.055);
+      ctx.lineTo(size * 0.3, -size * 0.18);
+      ctx.lineTo(size * 0.33, size * 0.055);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#fff2b8';
+      [-0.21, 0, 0.21].forEach((x) => {
+        ctx.beginPath();
+        ctx.arc(size * x, -size * 0.045, size * 0.035, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      roundedRect(-size * 0.34, size * 0.015, size * 0.68, size * 0.1, size * 0.035);
+      ctx.fillStyle = color;
+      ctx.fill();
+      ctx.stroke();
+    } else if (fighter.hatStyle === 'wizard') {
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.36, size * 0.07);
+      ctx.lineTo(size * 0.03, -size * 0.31);
+      ctx.quadraticCurveTo(size * 0.04, -size * 0.02, size * 0.3, size * 0.07);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.ellipse(0, size * 0.065, size * 0.38, size * 0.075, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#fff2b8';
+      drawStar(size * 0.04, -size * 0.12, size * 0.07, size * 0.032, 5);
+    } else if (fighter.hatStyle === 'beret') {
+      ctx.beginPath();
+      ctx.ellipse(-size * 0.015, -size * 0.035, size * 0.34, size * 0.16, -0.1, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.34, size * 0.07);
+      ctx.quadraticCurveTo(0, size * 0.13, size * 0.34, size * 0.065);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(size * 0.13, -size * 0.18, size * 0.04, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      roundedRect(-size * 0.3, -size * 0.12, size * 0.6, size * 0.19, size * 0.07);
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.ellipse(size * 0.015, size * 0.065, size * 0.38, size * 0.075, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      ctx.globalAlpha = 0.55;
+      ctx.beginPath();
+      ctx.arc(-size * 0.08, -size * 0.06, size * 0.025, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawSkeletonFace(size) {
+    const bone = '#f2f0df';
+    ctx.fillStyle = bone;
+    ctx.strokeStyle = 'rgba(38, 45, 58, 0.86)';
+    ctx.lineWidth = Math.max(1.1, size * 0.035);
+    roundedRect(-size * 0.3, -size * 0.29, size * 0.6, size * 0.52, size * 0.14);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#253044';
+    [-1, 1].forEach((side) => {
+      ctx.beginPath();
+      ctx.ellipse(side * size * 0.14, -size * 0.11, size * 0.078, size * 0.105, 0, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.beginPath();
+    ctx.moveTo(-size * 0.045, size * 0.015);
+    ctx.lineTo(size * 0.045, size * 0.015);
+    ctx.lineTo(0, size * 0.09);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#5a5960';
+    ctx.lineWidth = Math.max(0.8, size * 0.022);
+    ctx.beginPath();
+    ctx.moveTo(-size * 0.19, size * 0.13);
+    ctx.lineTo(size * 0.19, size * 0.13);
+    ctx.moveTo(-size * 0.095, size * 0.14);
+    ctx.lineTo(-size * 0.095, size * 0.2);
+    ctx.moveTo(0, size * 0.14);
+    ctx.lineTo(0, size * 0.205);
+    ctx.moveTo(size * 0.095, size * 0.14);
+    ctx.lineTo(size * 0.095, size * 0.2);
+    ctx.stroke();
+  }
+
+  function drawMechanicalFace(size) {
+    ctx.fillStyle = 'rgba(19, 34, 51, 0.88)';
+    ctx.strokeStyle = 'rgba(230, 255, 250, 0.92)';
+    ctx.lineWidth = Math.max(1.1, size * 0.035);
+    roundedRect(-size * 0.3, -size * 0.22, size * 0.6, size * 0.45, size * 0.09);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#a6fff0';
+    ctx.shadowColor = '#7bffe4';
+    ctx.shadowBlur = size * 0.08;
+    [-1, 1].forEach((side) => {
+      ctx.beginPath();
+      ctx.arc(side * size * 0.13, -size * 0.04, size * 0.055, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = '#9dbac0';
+    ctx.beginPath();
+    ctx.moveTo(-size * 0.14, size * 0.12);
+    ctx.lineTo(size * 0.14, size * 0.12);
+    ctx.moveTo(-size * 0.1, size * 0.17);
+    ctx.lineTo(size * 0.1, size * 0.17);
+    ctx.stroke();
+  }
+
+  function drawMechanicalAdornment(size, time) {
+    ctx.save();
+    ctx.translate(0, size * 0.31);
+    ctx.rotate(time * 0.0006);
+    ctx.strokeStyle = '#e7fff9';
+    ctx.lineWidth = Math.max(1, size * 0.028);
+    ctx.fillStyle = 'rgba(18, 39, 53, 0.88)';
+    ctx.beginPath();
+    for (let index = 0; index < 12; index += 1) {
+      const angle = index * Math.PI / 6;
+      const radius = size * (index % 3 === 0 ? 0.12 : 0.095);
+      const x = Math.cos(angle) * radius;
+      const y = Math.sin(angle) * radius;
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#9ffff0';
+    ctx.beginPath();
+    ctx.arc(0, 0, size * 0.04, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawSkeletonBow(size) {
+    ctx.save();
+    ctx.translate(size * 0.42, size * 0.1);
+    ctx.strokeStyle = '#7a4c32';
+    ctx.lineWidth = Math.max(1.4, size * 0.042);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(0, -size * 0.22);
+    ctx.quadraticCurveTo(size * 0.2, 0, 0, size * 0.22);
+    ctx.stroke();
+    ctx.strokeStyle = '#e8edf2';
+    ctx.lineWidth = Math.max(0.8, size * 0.018);
+    ctx.beginPath();
+    ctx.moveTo(0, -size * 0.22);
+    ctx.lineTo(0, size * 0.22);
+    ctx.moveTo(-size * 0.08, 0);
+    ctx.lineTo(size * 0.23, 0);
+    ctx.stroke();
+    ctx.fillStyle = '#fff4d6';
+    ctx.beginPath();
+    ctx.moveTo(size * 0.24, 0);
+    ctx.lineTo(size * 0.16, -size * 0.035);
+    ctx.lineTo(size * 0.16, size * 0.035);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
   function drawPersonalityFace(fighter, size, lookX, lookY) {
     const eyeY = -size * 0.12;
     const eyeDX = size * 0.17;
@@ -3699,10 +4580,15 @@
     ctx.globalAlpha = 1;
 
     if (fighter.isZombie) drawZombieFace(size);
+    else if (fighter.isSkeleton) drawSkeletonFace(size);
+    else if (fighter.isMechanical) drawMechanicalFace(size);
     else if (mood === 'wall' || mood === 'hurt') drawSurprisedFace(size, lookX, lookY);
     else if (mood === 'bump' || mood === 'obstacle') drawBumpedFace(size);
     else if (mood === 'dizzy') drawDizzyFace(size, time);
     else drawPersonalityFace(fighter, size, lookX, lookY);
+    drawHat(fighter, size);
+    if (fighter.isSkeleton) drawSkeletonBow(size);
+    if (fighter.isMechanical) drawMechanicalAdornment(size, time);
     if (fighter.isPriest) drawPriestAdornment(size, time);
 
     if (mood === 'wall' || mood === 'obstacle') {
@@ -3916,6 +4802,10 @@
         itemUses: match.itemUses,
         projectileHits: match.projectileHits,
         laserHits: match.laserHits,
+        snowflakeHits: match.snowflakeHits,
+        skeletonArrowsFired: match.skeletonArrowsFired,
+        skeletonArrowsHit: match.skeletonArrowsHit,
+        mechanicalRedirects: match.mechanicalRedirects,
         c4Detonations: match.c4Detonations,
       },
       items: getItemSystemSnapshot(),
@@ -3932,6 +4822,14 @@
         eliminated: fighter.eliminated,
         isZombie: fighter.isZombie,
         isPriest: fighter.isPriest,
+        isSkeleton: fighter.isSkeleton,
+        isMechanical: fighter.isMechanical,
+        hatStyle: fighter.hatStyle,
+        hatColor: fighter.hatColor,
+        mechanicalSummonerId: fighter.mechanicalSummonerId,
+        mechanicalPhaseRemaining: Number(fighter.mechanicalPhaseRemaining.toFixed(3)),
+        mechanicalSettled: fighter.mechanicalSettled,
+        skeletonAttackCooldown: Number(fighter.skeletonAttackCooldown.toFixed(3)),
         summonerId: fighter.summonerId,
         teamOwnerId: teamOwnerIdOf(fighter),
         zombieHealthDrainRemaining: Number(fighter.zombieHealthDrainRemaining.toFixed(3)),

@@ -33,7 +33,7 @@
           <div class="intro-copy">
             <div class="eyebrow"><span>试验场 01</span><b>✳</b> 自定义你的方块派对</div>
             <h1 id="page-title">撞一下，<em>弹起来！</em></h1>
-            <p>方块自动弹跳、拾取并使用道具；僵尸也会使用法杖与武器，水泥道具可筑起十秒无敌墙，全程无需手动操作。</p>
+            <p>AI 会综合威胁、距离和血量挑选目标，并根据肾上腺素、减速、碰撞加速和反弹预判射击；全程自动弹跳、拾取与出招。</p>
           </div>
           <div class="mode-stamp glass-panel" aria-label="自动弹跳与 AI 道具对战">
             <span class="stamp-icon" aria-hidden="true">✦</span>
@@ -57,7 +57,7 @@
             <div class="item-status" id="itemStatus" role="status" aria-live="polite">普通道具 0/2 · 自动使用就绪</div>
 
             <div class="arena-shell" id="arenaShell">
-              <canvas id="gameCanvas" aria-label="方块自动弹跳并自动拾取道具；僵尸随机弹跳、拾取武器并以召唤者名义攻击；肾上腺素拖尾与水泥四面墙效果；水泥墙持续十秒并阻挡激光。">
+              <canvas id="gameCanvas" aria-label="AI 方块根据威胁和血量选择目标并预判肾上腺素、碰撞加速和反弹；自动拾取与出招；雪花风暴、骷髅弓手和机械护卫。">
                 你的浏览器不支持 Canvas。
               </canvas>
               <div class="canvas-fallback" id="canvasFallback" aria-live="polite">
@@ -215,7 +215,7 @@
                 </div>
                 <div class="rule-row">
                   <span class="rule-symbol weapon-symbol" aria-hidden="true">➤</span>
-                  <span><strong>远程武器</strong><small>手枪 10；霰弹 3 发×10；狙击 20 HP，AI 预判弹道</small></span>
+                  <span><strong>远程武器与智能瞄准</strong><small>手枪 10；霰弹 3 发×10；狙击 20 HP。AI 综合威胁、距离与血量选目标，并预判肾上腺素、冰冻、碰撞加速、边界反弹和障碍碰撞</small></span>
                 </div>
                 <div class="rule-row">
                   <span class="rule-symbol flame-symbol" aria-hidden="true">♨</span>
@@ -253,8 +253,20 @@
                   <span class="rule-symbol cement-symbol" aria-hidden="true">▤</span>
                   <span><strong>水泥</strong><small>在自己四周生成四面无敌水泥墙，持续 10 秒；墙会让方块弹开，并阻挡激光</small></span>
                 </div>
+                <div class="rule-row">
+                  <span class="rule-symbol snowflake-symbol" aria-hidden="true">❄</span>
+                  <span><strong>雪花风暴</strong><small>自动发射 100 枚与使用者同色的雪花，每枚造成 1 HP；命中后移速降低 50%，持续 1 秒</small></span>
+                </div>
+                <div class="rule-row">
+                  <span class="rule-symbol skeleton-symbol" aria-hidden="true">☠</span>
+                  <span><strong>骷髅法杖</strong><small>召唤 3 个同色、各 50 HP 的骷髅弓手；每秒流失 1 HP、随机弹跳且不拾取道具，帽子沿用召唤者；每 2 秒射出一支 5 HP 预判箭</small></span>
+                </div>
+                <div class="rule-row">
+                  <span class="rule-symbol mechanical-symbol" aria-hidden="true">⚙</span>
+                  <span><strong>机械方块</strong><small>召出同色机械护卫，只会弹跳且不拾道具；前 10 秒 10000 HP，10 秒后耐久变为 200 HP，并会留场直到被击败。召唤者受伤时每 0.2 秒最多替挡一次、每次最多 10 HP；超出部分仍由召唤者承受</small></span>
+                </div>
               </div>
-              <div class="physics-note"><i></i> 自动拾取与自动攻击，无手动操控；武器不会伤到射手，C4 安装者免疫自己的爆炸。</div>
+              <div class="physics-note"><i></i> 自动拾取与自动攻击，无手动操控；武器不会伤到射手或同队召唤物，C4 安装者免疫自己的爆炸。</div>
             </section>
 
             <section class="info-card glass-panel mood-card" aria-labelledby="mood-title">
