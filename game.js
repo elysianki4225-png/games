@@ -1098,11 +1098,10 @@
     return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
   }
 
-  function getMechanicalProtector(owner, requireReady = false) {
+  function getMechanicalProtector(owner) {
     if (!match || !owner) return null;
     return match.fighters
       .filter((fighter) => fighter.isMechanical && !fighter.eliminated && fighter.mechanicalSummonerId === owner.id)
-      .filter((fighter) => !requireReady || fighter.mechanicalDamageReadyAt <= match.simulationTime + 1e-6)
       .sort((first, second) => second.health / Math.max(1, second.maxHealth) - first.health / Math.max(1, first.maxHealth))[0] || null;
   }
 
@@ -1112,19 +1111,20 @@
     if (attacker && areSummonAllies(attacker, fighter)) return 0;
 
     if (!fighter.isMechanical && source !== 'zombieDecay' && source !== 'skeletonDecay') {
-      const protector = getMechanicalProtector(fighter, true);
+      const protector = getMechanicalProtector(fighter);
       if (protector) {
-        const redirectedAmount = Math.min(amount, ITEM_RULES.mechanicalBlockDamageLimit);
-        const protectorHealthBefore = protector.health;
-        const redirected = applyDamage(protector, redirectedAmount, source, announce, attackerId);
-        const actualRedirected = Math.min(protectorHealthBefore, redirected);
-        if (actualRedirected > 0) {
-          match.mechanicalRedirects += 1;
-          fighter.lastDamageAt = match.simulationTime;
-          addEvent(`${protector.name} 替 ${fighter.name} 承受 ${formatHealthAmount(actualRedirected)} HP`, protector.color);
-          amount = Math.max(0, amount - actualRedirected);
-          if (amount <= 1e-6) return 0;
+        if (protector.mechanicalDamageReadyAt <= match.simulationTime + 1e-6) {
+          const redirectedAmount = Math.min(amount, ITEM_RULES.mechanicalBlockDamageLimit);
+          const protectorHealthBefore = protector.health;
+          const redirected = applyDamage(protector, redirectedAmount, source, announce, attackerId);
+          const actualRedirected = Math.min(protectorHealthBefore, redirected);
+          if (actualRedirected > 0) {
+            match.mechanicalRedirects += 1;
+            fighter.lastDamageAt = match.simulationTime;
+            addEvent(`${protector.name} 替 ${fighter.name} 承受 ${formatHealthAmount(actualRedirected)} HP`, protector.color);
+          }
         }
+        return 0;
       }
     }
 
